@@ -1,0 +1,35 @@
+{
+  "name": "@cody-greene/rabbitmq-client",
+  "version": "0.1.0",
+  "description": "RabbitMQ (0-9-1) client library",
+  "repository": "cody-greene/node-rabbitmq-client",
+  "keywords": [
+    "amqp",
+    "rabbitmq",
+    "0-9-1"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=8.0.0"
+  },
+  "eslintConfig": {
+    "root": true,
+    "extends": "./node_modules/@cody-greene/eslint-config/strict.yml",
+    "parserOptions": {
+      "ecmaVersion": 2017
+    },
+    "env": {
+      "node": true,
+      "es6": true
+    }
+  },
+  "main": "lib/connection.js",
+  "scripts": {},
+  "dependencies": {
+    "lodash": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cody-greene/eslint-config": "^3.3.1",
+    "mocha": "^5.0.0"
+  }
+}
