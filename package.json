@@ -12,17 +12,6 @@
   "engines": {
     "node": ">=8.0.0"
   },
-  "eslintConfig": {
-    "root": true,
-    "extends": "./node_modules/@cody-greene/eslint-config/strict.yml",
-    "parserOptions": {
-      "ecmaVersion": 2017
-    },
-    "env": {
-      "node": true,
-      "es6": true
-    }
-  },
   "main": "lib/connection.js",
   "scripts": {},
   "dependencies": {
