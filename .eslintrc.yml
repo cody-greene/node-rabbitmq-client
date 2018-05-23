@@ -1,5 +1,5 @@
 root: true
-extends: ./node_modules/@cody-grenee/eslint-config/strict.yml
+extends: ./node_modules/@cody-greene/eslint-config/strict.yml
 parserOptions:
   ecmaVersion: 2017
 env:
