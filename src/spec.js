@@ -5,6 +5,8 @@ module.exports = transformDefs(require('./amqp-rabbitmq-0.9.1.json'))
 function transformDefs(src) {
   let domains = new Map(src.domains)
   let classes = new Map()
+  let syncMethods = []
+  let asyncMethods = []
   for (let index = 0; index < src.classes.length; index++) {
     let item = src.classes[index]
     item = {
@@ -13,10 +15,22 @@ function transformDefs(src) {
       properties: item.properties,
       methods: transformMethods(item.methods, domains)
     }
-    classes.set(item.id, item).set(item.name, item)
+    item.methods.forEach(method => {
+      let fullName = item.name + '.' + method.name
+      if (method.synchronous) {
+        // methods that expect an immediate response
+        syncMethods.push(fullName)
+      }
+      else {
+        // methods that DO NOT expect an immediate response
+        asyncMethods.push(fullName)
+      }
+    })
+    classes.set(item.id, item)
+    classes.set(item.name, item)
   }
   let headers = transformContentHeaders(classes.get('basic').properties)
-  let res = {classes, headers}
+  let res = {classes, headers, syncMethods, asyncMethods}
   transformConstants(src, res)
   return res
 }

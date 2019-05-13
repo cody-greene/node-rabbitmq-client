@@ -86,6 +86,24 @@ class Deque {
     this.tail = null
     return items
   }
+  remove(el) {
+    let cur = this.head
+    let prv = null
+    while (cur) {
+      if (cur.val === el) {
+        if (prv) {
+          prv._r = cur._r
+        }
+        if (cur._r) {
+          cur._r._l = prv
+        }
+        return el
+      }
+      prv = cur
+      cur = cur._r
+    }
+    return null
+  }
 }
 
 module.exports = Deque

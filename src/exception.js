@@ -22,7 +22,11 @@ function AMQPError(code, message) {
 AMQPError.prototype = Object.create(Error.prototype)
 AMQPError.prototype.constructor = AMQPError
 
-class AMQPConnectionError extends AMQPError {}
 class AMQPChannelError extends AMQPError {}
+class AMQPConnectionError extends AMQPChannelError {}
 
+/**
+ * Severity (low < high):
+ * AMQPError < AMQPChannelError < AMQPConnectionError
+ */
 module.exports = {AMQPError, AMQPConnectionError, AMQPChannelError}

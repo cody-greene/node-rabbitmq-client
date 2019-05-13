@@ -5,15 +5,8 @@ const spec = require('./spec')
 
 const BIT_POS = [1, 2, 4, 8, 16, 32, 64, 128]
 const hasOwn = Object.prototype.hasOwnProperty
-const SCRATCH_BUFFER = Buffer.alloc(4 * 1024)
+const SCRATCH_BUFFER = Buffer.alloc(4 * 1024) // TODO make this configurable
 const PROTOCOL_HEADER = Buffer.from('AMQP' + String.fromCharCode(...spec.VERSION))
-const FRAME_END = spec.FRAME_END
-const FRAME_TYPE = {
-  METHOD: spec.FRAME_METHOD,
-  HEADER: spec.FRAME_HEADER,
-  BODY: spec.FRAME_BODY,
-  HEARTBEAT: spec.FRAME_HEARTBEAT
-}
 
 const TYPE = {
   UINT8: {
@@ -42,13 +35,7 @@ const TYPE = {
   },
   UINT64: {
     decode(src, offset) {
-      // let hi = src.readUInt32BE(offset)
-      // let lo = src.readUInt32BE(offset + 4)
-      let val = src.readUIntBE(offset, 8)
-      if (val > Number.MAX_SAFE_INTEGER) {
-        val = src.toString('hex', offset, offset + 8)
-      }
-      return [val, offset + 8]
+      return [readUInt64BE(src, offset), offset + 8]
     },
     encode: writeUInt64BE
   },
@@ -78,7 +65,7 @@ const TYPE = {
   },
   INT64: {
     decode(src, offset) {
-      return [src.toString('hex', offset, offset + 8), offset + 8]
+      return [readInt64BE(src, offset), offset + 8]
     },
     encode: writeInt64BE
   },
@@ -295,12 +282,12 @@ const TYPE = {
     decode(src, offset) {
       let [data, nextOffset] = TYPE.VARBIN32.decode(src, offset)
       let total = data.length
-      let table = new Map()
+      let table = {}
       let index = 0
       var key, val
       while (index < total) {
         [key, val, index] = TYPE.TABLE_PAIR.decode(data, index)
-        table.set(key, val)
+        table[key] = val
       }
       return [table, nextOffset]
     },
@@ -326,7 +313,7 @@ const TYPE = {
     decode(src, offset) {
       let classId = src.readUInt16BE(offset)
       // let weight = src.readUInt16BE(offset + 2) // not used
-      let bodySize = src.readUIntBE(offset + 4, 8)
+      let bodySize = readUInt64BE(src, offset + 4)
       let flags = src.readUInt16BE(offset + 12)
       let properties = {}
       offset = offset + 14
@@ -345,7 +332,7 @@ const TYPE = {
     encode(out, {className, bodySize, params}, offset) {
       out.writeUInt16BE(spec.classes.get(className).id, offset)
       out.writeUInt16BE(0, offset + 2)
-      out.writeUIntBE(bodySize, offset + 4, 8)
+      writeUInt64BE(out, bodySize, offset + 4)
       let flags = 0
       let flagsOffset = offset + 12
       offset = offset + 14
@@ -400,58 +387,56 @@ const PARAM_TYPE = {
   timestamp: TYPE.UINT64,
 }
 
-const HEARTBEAT_FRAME = TYPE.FRAME.encode(FRAME_TYPE.HEARTBEAT, 0, null)
+const HEARTBEAT_FRAME = TYPE.FRAME.encode(spec.FRAME_HEARTBEAT, 0, null)
 
 /**
  * Signed 64bit integers
- * Use a hex value for numbers over 53bits
  */
-function writeInt64BE(out, val, offset) {
-  if (typeof val == 'string') {
-    if (val.length < 16) {
-      val = '0'.repeat(16 - val.length) + val
-    }
-    else if (val.length > 16) {
+function writeInt64BE(buf, val, offset) {
+  // TODO node-v12 Buffer#writeBigInt64BE(value: BigInt, offset?: number)
+  if (typeof val == 'number') {
+    if (val > 0x7fffffffffff || val < -0x7fffffffffff) {
       throw new TypeError('value is out of bounds')
     }
-    out.write(val, offset, 8, 'hex')
-  }
-  else if (typeof val == 'number') {
-    if (val > Number.MAX_SAFE_INTEGER || val < -Number.MAX_SAFE_INTEGER) {
-      throw new TypeError('value is out of bounds')
-    }
-    out.writeIntBE(val, offset, 8)
+    buf.writeUIntBE(val > 0 ? 0 : 0xffff, offset, 2) // fill the upper 2 bytes
+    buf.writeIntBE(val, offset + 2, 6)
   }
   else {
-    throw new TypeError('invalid value; must be a hex string or a number')
+    throw new TypeError('invalid value; must be a number')
   }
   return offset + 8
 }
 
+function readInt64BE(buf, offset) {
+  // TODO node-v12 Buffer#readBigInt64BE(offset?: number): BigInt
+  // warning: we're actually reading a 48bit number here since BigInts aren't
+  //          supported natively, yet
+  return buf.readIntBE(offset + 2, 6)
+}
+
 /**
  * Unsigned 64bit integers
- * Use a hex value for numbers over 53bits
  */
-function writeUInt64BE(out, val, offset) {
-  if (typeof val == 'string') {
-    if (val.length < 16) {
-      val = '0'.repeat(16 - val.length) + val
-    }
-    else if (val.length > 16) {
+function writeUInt64BE(buf, val, offset) {
+  // TODO node-v12 Buffer#writeBigUInt64BE(value: BigInt, offset?: number)
+  if (typeof val == 'number') {
+    if (val > 0xffffffffffff || val < 0) {
       throw new TypeError('value is out of bounds')
     }
-    out.write(val, offset, 8, 'hex')
-  }
-  else if (typeof val == 'number') {
-    if (val > Number.MAX_SAFE_INTEGER || val < 0) {
-      throw new TypeError('value is out of bounds')
-    }
-    out.writeUIntBE(val, offset, 8)
+    buf.writeUIntBE(0, offset, 2) // zero-fill the upper 2 bytes
+    buf.writeUIntBE(val, offset + 2, 6)
   }
   else {
-    throw new TypeError('invalid value; must be a hex string or a number')
+    throw new TypeError('invalid value; must be a number')
   }
   return offset + 8
+}
+
+function readUInt64BE(buf, offset) {
+  // TODO node-v12 Buffer#readBigUInt64BE(offset?: number): BigInt
+  // warning: we're actually reading a 48bit number here since BigInts aren't
+  //          supported natively, yet
+  return buf.readUIntBE(offset + 2, 6)
 }
 
 function decodeMethodPayload(src, offset) {
@@ -537,11 +522,11 @@ function decodeFrame(src) {
   let channelId = src.readUInt16BE(1)
   let [payload, offset] = TYPE.VARBIN32.decode(src, 3)
   let frameEnd = src.readUInt8(offset)
-  if (frameEnd !== FRAME_END) {
+  if (frameEnd !== spec.FRAME_END) {
     throw new Error('invalid FRAME_END octet: ' + frameEnd)
   }
   let rest = src.length > offset + 1 ? src.slice(offset + 1) : null
-  if (type === FRAME_TYPE.METHOD) {
+  if (type === spec.FRAME_METHOD) {
     try {
       payload = TYPE.METHOD_PAYLOAD.decode(payload, 0)
       return [{
@@ -549,6 +534,7 @@ function decodeFrame(src) {
         channelId: channelId,
         className: payload.className,
         methodName: payload.methodName,
+        fullName: payload.className + '.' + payload.methodName,
         params: payload.params
       }, rest]
     }
@@ -559,7 +545,7 @@ function decodeFrame(src) {
       throw err
     }
   }
-  else if (type === FRAME_TYPE.HEADER) {
+  else if (type === spec.FRAME_HEADER) {
     payload = TYPE.HEADER_PAYLOAD.decode(payload, 0)
     return [{
       type: 'header',
@@ -569,16 +555,15 @@ function decodeFrame(src) {
       properties: payload.properties,
     }, rest]
   }
-  else if (type === FRAME_TYPE.BODY) {
+  else if (type === spec.FRAME_BODY) {
     return [{type: 'body', channelId, payload}, rest]
   }
-  else if (type === FRAME_TYPE.HEARTBEAT) {
+  else if (type === spec.FRAME_HEARTBEAT) {
     return [{type: 'heartbeat'}, rest]
   }
 }
 
 /**
- * @param {enum} type One of FRAME_TYPE.*
  * @param {number} channelId (1, maxChannels)
  * @param {object|Buffer} payload
  * @return {Buffer}
@@ -587,17 +572,17 @@ function decodeFrame(src) {
 function encodeFrame(type, channelId, payload) {
   var payloadSize
   var payloadBuffer = SCRATCH_BUFFER
-  if (type === FRAME_TYPE.METHOD) {
+  if (type === spec.FRAME_METHOD) {
     payloadSize = TYPE.METHOD_PAYLOAD.encode(SCRATCH_BUFFER, payload, 0)
   }
-  else if (type === FRAME_TYPE.HEADER) {
+  else if (type === spec.FRAME_HEADER) {
     payloadSize = TYPE.HEADER_PAYLOAD.encode(SCRATCH_BUFFER, payload, 0)
   }
-  else if (type === FRAME_TYPE.BODY) {
+  else if (type === spec.FRAME_BODY) {
     payloadSize = payload.length
     payloadBuffer = payload
   }
-  else if (type === FRAME_TYPE.HEARTBEAT) {
+  else if (type === spec.FRAME_HEARTBEAT) {
     payloadSize = 0
   }
   else {
@@ -608,12 +593,12 @@ function encodeFrame(type, channelId, payload) {
   out.writeUInt16BE(channelId, 1)
   out.writeUInt32BE(payloadSize, 3)
   payloadBuffer.copy(out, 7, 0, payloadSize)
-  out.writeUInt8(FRAME_END, 7 + payloadSize)
+  out.writeUInt8(spec.FRAME_END, 7 + payloadSize)
   return out
 }
 
 function encodeMethod(channelId, className, methodName, params) {
-  return TYPE.FRAME.encode(FRAME_TYPE.METHOD, channelId, {className, methodName, params})
+  return TYPE.FRAME.encode(spec.FRAME_METHOD, channelId, {className, methodName, params})
 }
 
 /**
@@ -624,11 +609,11 @@ function encodeMethod(channelId, className, methodName, params) {
 function encodeMessage(channelId, params, body, maxSize) {
   let totalContentFrames = Math.ceil(body.length / (maxSize - 8)) + 1
   let frames = new Array(totalContentFrames)
-  frames[0] = TYPE.FRAME.encode(FRAME_TYPE.HEADER, channelId,
+  frames[0] = TYPE.FRAME.encode(spec.FRAME_HEADER, channelId,
     {className: 'basic', bodySize: body.length, params})
   for (let index = 1; index < totalContentFrames; index++) {
     let offset = (maxSize - 8) * (index - 1)
-    frames[index] = TYPE.FRAME.encode(FRAME_TYPE.BODY, channelId,
+    frames[index] = TYPE.FRAME.encode(spec.FRAME_BODY, channelId,
       body.slice(offset, offset + maxSize - 8))
   }
   return frames
