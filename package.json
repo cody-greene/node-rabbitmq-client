@@ -1,5 +1,5 @@
 {
-  "name": "rmq-client",
+  "name": "rabbitmq-client",
   "version": "1.0.0",
   "description": "RabbitMQ (0-9-1) client library",
   "repository": "github:cody-greene/node-rabbitmq-client",
@@ -9,6 +9,8 @@
     "0-9-1"
   ],
   "license": "MIT",
+  "main": "src/index.js",
+  "files": ["src"],
   "engines": {
     "node": ">=10.4.0"
   },
