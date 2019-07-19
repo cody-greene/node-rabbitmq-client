@@ -2,8 +2,13 @@
 const test = require('../tape-promise')
 const RMQConnection = require('../src/')
 const AMQP_URL = process.env.AMQP_URL
+const URL = require('url').URL
 
 let refs = null
+
+if (!AMQP_URL) {
+  throw new Error('AMQP_URL is undefined')
+}
 
 async function setup(assert) {
   await teardown()
@@ -102,11 +107,45 @@ test('connection.createPublisher (basic.return)', async (assert) => {
   })
   assert.pass('created Publisher')
   refs.push(pub)
-  await pub.publish({routingKey: '', mandatory: true}, expectedMessageBody)
+  pub.publish({routingKey: '', mandatory: true}, expectedMessageBody)
   assert.pass('published unroutable mandatory msg')
 })
 
-test.skip('confirm-mode channel')
+test('confirm-mode channel', async (assert) => {
+  const connection = await setup(assert)
+  const ch = await connection.acquire()
+  const {queue} = await ch.queueDeclare({exclusive: true})
+  await ch.confirmSelect()
+  const pr = ch.basicPublish(queue, 'confirmed msg body')
+  await pr
+  assert.ok(pr != null && typeof pr.then === 'function',
+    'basicPublish returned a Promise')
+})
+
+test('cluster failover', async (assert) => {
+  assert.plan(3)
+  await teardown()
+  refs = []
+  assert.timeoutAfter(5000)
+  const url = new URL(AMQP_URL)
+  const fakeHost = 'localhost:123'
+  const realHost = url.hostname + ':' + url.port
+  const conn = new RMQConnection({
+    url: AMQP_URL,
+    // should fail once, then connect to the second host
+    hosts: [fakeHost, realHost],
+  })
+  assert.pass('created connection with multiple hosts')
+  refs.push(conn)
+  conn.once('error', (err) => {
+    assert.ok(err, 'got first connection error')
+    conn.on('error', assert.end)
+  })
+  conn.on('connection', () => {
+    assert.pass('"connected" event trigged')
+    assert.end()
+  })
+})
 
 // TODO connection reconnect
 // TODO consumer reconnect

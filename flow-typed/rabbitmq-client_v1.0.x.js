@@ -34,6 +34,15 @@ declare module 'rmq-client' {
     body: MessageBody,
   }
 
+  declare export type QueueDeclareProps = {
+    queue?: ?string,
+    passive?: ?boolean,
+    durable?: ?boolean,
+    exclusive?: ?boolean,
+    autoDelete?: ?boolean,
+    arguments?: ?Object,
+  }
+
   declare export type ConsumerProps = {
     queue: string,
     exclusive?: ?boolean,
@@ -62,14 +71,7 @@ declare module 'rmq-client' {
     // watch for unroutable messages (must be published with mandatory=true)
     onBasicReturn?: ?(ReturnedMessage => void),
     // declare all the queues you expect to use
-    queues?: ?Array<string | {
-      queue?: ?string,
-      passive?: ?boolean,
-      durable?: ?boolean,
-      exclusive?: ?boolean,
-      autoDelete?: ?boolean,
-      arguments?: ?Object,
-    }>
+    queues?: ?string | QueueDeclareProps | Array<string | QueueDeclareProps>
   }
 
   declare export type Publisher = {
@@ -202,14 +204,8 @@ declare module 'rmq-client' {
     }): Promise<void>,
 
     // if the queue name is undefined then one will be randomly generated
-    queueDeclare(?string | {
-      queue?: ?string,
-      passive?: ?boolean,
-      durable?: ?boolean,
-      exclusive?: ?boolean,
-      autoDelete?: ?boolean,
-      arguments?: ?Object,
-    }): Promise<{queue: string, messageCount: number, consumerCount: number}>,
+    queueDeclare(?string | QueueDeclareProps)
+      : Promise<{queue: string, messageCount: number, consumerCount: number}>,
 
     queueDelete({
       queue: string,
@@ -259,9 +255,11 @@ declare module 'rmq-client' {
     // and register a handler for consuming messages.
     // This will also attempt to reestablish the channel after temporary disconnections.
     // If the handler promise is rejected then the message will be returned to the
-    // server, otherwise the message will be ack'd.
+    // server, otherwise the message will be ack'd. If the handler does not return
+    // a promise then the message is ack'd immediately.
     // createConsumer('myQueue', ...) is equivalent to {queue: 'myQueue', passive: true}
-    createConsumer(string | ConsumerProps, (Message) => Promise<void>): Promise<Consumer>,
+    createConsumer(string | ConsumerProps, (Message) => Promise<void>)
+      : Consumer,
 
     // This helpers will create a dedicated channel, optionally declare several queues,
     // and optionally enable publisher acknowledgments.
@@ -269,7 +267,8 @@ declare module 'rmq-client' {
     // connection is temporarily lost.
     // Note: this does not return a Promise. The channel is actually created on
     // the first use of publish()
-    createPublisher(?PublisherProps): Publisher,
+    createPublisher(?string | Array<string | QueueDeclareProps> | PublisherProps)
+      : Publisher,
 
     // This helper will create a dedicated channel in transaction mode and
     // commit/rollback when the handler resolves/rejects

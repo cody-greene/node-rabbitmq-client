@@ -1,21 +1,67 @@
-This starts at a high level for a "quick start" kind of guide, with the helper functions for publishing/consuming. Then it will become increasingly specific.
+Look at `flow-typed/rabbitmq-client_*.js` for the full API.
+
+## Getting started
+```
+const RabbitMQConnection = require('rabbitmq-client')
+const connection = new RabbitMQConnection('amqp://guest:guest@localhost:5672')
+connection.on('error', (err) => {
+  // connection refused, etc
+  console.error(err.stack)
+})
+
+// graceful shutdown
+connection.close().then(() => {
+  // all channels have been released and the connection closed
+})
+```
+
+This library includes some helper functions for creating publishers/consumers that combines a few of the lower level amqp methods and can recover after connection loss.
+```
+// create a dedicated channel and create some queues
+const pro = connection.createPublisher(['my-queue', 'my-other-queue'])
+
+// publish to the new queues
+// publisher-confirms are off by default so this returns undefined
+pro.publish('my-queue', {title: 'Hello, AMQP!'})
+pro.publish('my-other-queue', 'just some text')
+
+// close the channel
+pro.close().catch(err => { console.error(err.stack) })
 
 
 
-Additional Error codes:
-- MAX_CHANNELS no more channels available on the connection
-- EDRAIN acquire failed channel pool is draining
-- CONN_CLOSE socket closed unexpectedly
-- CH_CLOSE channel is closed
-- VERSION_MISMATCH server does not support this version of the AMQP protocol
-- ETIMEDOUT connection timed out
-- NACK message rejected by server
+// create a channel, assert a queue, set the QoS, register a consumer handler
+const consumer = connection.createConsumer({
+  queue: 'my-queue',
+  passive: true, // don't create the channel
+  prefetchCount: 1, // consume one at a time
+}, async (msg) => {
+  // message handler
+  console.log(msg)
+  // do something async
+})
 
+// keep listening for messages until consumer.close()
+```
+
+The lower level methods look like this (async-await syntax):
+```
+const ch = await conection.acquire()
+await ch.queueDeclare({
+  queue: 'my-queue',
+  exclusive: true,
+})
+// enable publisher confirms manually
+await ch.confirmSelect()
+await ch.basicPublish('my-queue', {title: 'just some object'})
+await ch.close()
+```
 
 Limitations:
 - does not support the "nowait" param
 
 Notable Differences from amqplib (squaremo/amqp.node):
+- Dooes not support less than node-v10.x
 - No dependencies
 - Uses native Promises inside & out
 - Uses named args instead of positional arguments

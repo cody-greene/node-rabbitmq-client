@@ -77,7 +77,7 @@ class RabbitMQConnection {
     return this._conn.unblocked
   }
 
-  async createConsumer(props, handler) {
+  createConsumer(props, handler) {
     let ch = null
     if (typeof props === 'string') {
       props = {queue: props, passive: true}
@@ -117,19 +117,23 @@ class RabbitMQConnection {
         }
       }
       ch.on('basic.cancel', checkCancel)
+      this.once('connection', wrapper)
     }
     const wrapper = () => {
       establishChannel().catch(err => {
+        this.off('connection', wrapper)
         err.message = 'consumer is dead: ' + err.message
         this._conn.emit('error', err)
       })
     }
     const close = () => {
       this.off('connection', wrapper)
+      if (!ch) {
+        return Promise.resolve()
+      }
       return ch.close()
     }
-    await establishChannel()
-    this.on('connection', wrapper)
+    wrapper()
     return {close}
   }
 
@@ -150,8 +154,15 @@ class RabbitMQConnection {
   }
 
   createPublisher(props) {
-    props = props || {}
     let ch
+    if (typeof props === 'string' || Array.isArray(props)) {
+      props = {queues: props}
+    } else {
+      props = Object.assign({}, props)
+    }
+    if (typeof props.queues === 'string' || (typeof props.queues == 'object' && !Array.isArray(props.queues))) {
+      props.queues = [props.queues]
+    }
     const establishChannel = async () => {
       ch = await this.acquire()
       if (props.confirm) {
