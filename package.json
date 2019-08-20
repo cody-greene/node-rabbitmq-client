@@ -1,8 +1,12 @@
 {
   "name": "rabbitmq-client",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "RabbitMQ (0-9-1) client library",
-  "repository": "github:cody-greene/node-rabbitmq-client",
+  "homepage": "https://github.com/cody-greene/node-rabbitmq-client",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cody-greene/node-rabbitmq-client.git"
+  },
   "keywords": [
     "amqp",
     "rabbitmq",

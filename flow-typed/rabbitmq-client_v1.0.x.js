@@ -1,4 +1,4 @@
-declare module 'rmq-client' {
+declare module 'rabbitmq-client' {
   declare export type MessageBody = string | Buffer | Object
 
   declare export type Envelope = {
@@ -151,6 +151,12 @@ declare module 'rmq-client' {
     basicReject({deliveryTag: string, requeue?: ?boolean}): void,
 
     basicCancel(consumerTag: string): Promise<void>,
+
+    // - the type of mesage.body depends on contentType and contentEncoding
+    // - assuming contentEncoding is null:
+    //   - text/plain :: string
+    //   - application/json :: Object
+    //   - anything else is a Buffer
     basicConsume(string | {
       consumerTag?: ?string,
       exclusive?: ?boolean,
@@ -160,8 +166,10 @@ declare module 'rmq-client' {
     }, (Message) => void): Promise<string>,
     basicGet({queue: string, noAck?: ?boolean}): Promise<?Message>,
 
-    // Note this returns a promise when publisher confirms are enabled
-    // with confirmSelect()
+    // - returns a promise when publisher confirms are enabled: confirmSelect()
+    // - if MessageBody is a string then it will be transferred as text/plain
+    // - a Buffer object is passed through unchanged
+    // - anything else serialized as application/json
     basicPublish(string | Envelope, MessageBody): void | Promise<void>,
 
     basicQos({

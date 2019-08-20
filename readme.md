@@ -1,5 +1,19 @@
 Look at `flow-typed/rabbitmq-client_*.js` for the full API.
 
+Limitations:
+- does not support the "nowait" param
+
+Notable Differences from amqplib (squaremo/amqp.node):
+- Dooes not support less than node-v10.x
+- No dependencies
+- Failed connections automatically reconnect
+- Built-in clustering/high-availability support
+- Uses native Promises inside & out
+- Uses named args instead of positional arguments
+- ch.basicPublish() returns a Promise when publisher confirms are enabled on the channel
+- "x-arguments" like "x-message-ttl" don't have camelCase aliases
+
+
 ## Getting started
 ```
 const RabbitMQConnection = require('rabbitmq-client')
@@ -9,9 +23,17 @@ connection.on('error', (err) => {
   console.error(err.stack)
 })
 
-// graceful shutdown
-connection.close().then(() => {
-  // all channels have been released and the connection closed
+connection.acquire().then(ch => {
+  // This does not return a promise by default
+  ch.basicPublish('my-queue', {title: 'just some object'})
+
+  // It's your responsibility to close any acquired channels
+  return ch.close()
+}).then(() => {
+  // Graceful shutdown once all channels are closed
+  return connection.close()
+}).catch(err => {
+  console.log(err)
 })
 ```
 
@@ -44,7 +66,7 @@ const consumer = connection.createConsumer({
 // keep listening for messages until consumer.close()
 ```
 
-The lower level methods look like this (async-await syntax):
+The basic methods look like this (async-await syntax):
 ```
 const ch = await conection.acquire()
 await ch.queueDeclare({
@@ -56,19 +78,6 @@ await ch.confirmSelect()
 await ch.basicPublish('my-queue', {title: 'just some object'})
 await ch.close()
 ```
-
-Limitations:
-- does not support the "nowait" param
-
-Notable Differences from amqplib (squaremo/amqp.node):
-- Dooes not support less than node-v10.x
-- No dependencies
-- Uses native Promises inside & out
-- Uses named args instead of positional arguments
-- ch.basicPublish() returns a Promise when publisher confirms are enabled on the channel
-- Failed connections automatically reconnect
-- Built-in clustering/high-availability support
-- "x-arguments" like "x-message-ttl" don't have camelCase aliases
 
 If you're publishing too quickly for the socket or for the rabbitmq server to keep up then use `connection.unblocked` and `connection.on('drain', cb)` to check for backpressure. This will help you avoid filling up the TCP socket's send-buffer and crashing with an OOM error.
 Backpressure example:

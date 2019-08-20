@@ -5,9 +5,8 @@ const TLS_PORT = 5671
 const TCP_PORT = 5672
 const DEFAULT_OPTS = {
   connectionTimeout: 10000, // millis
-  frameMax: (128 * 1024), // bytes
-  heartbeat: 23, // seconds
-  idleTimeout: 30000, // millis
+  frameMax: 4096, // bytes
+  heartbeat: 120, // seconds
   maxChannels: 0xffff, // 16 bits (protocol max)
   retryLow: 500,
   retryHigh: 5500,
@@ -79,7 +78,6 @@ function normalizeOptions(props) {
   assertNumber(props, 'connectionTimeout', 0)
   assertNumber(props, 'frameMax', 8)
   assertNumber(props, 'heartbeat', 0)
-  assertNumber(props, 'idleTimeout', 1000)
   assertNumber(props, 'maxChannels', 1, DEFAULT_OPTS.maxChannels)
   assertNumber(props, 'retryLow', 1)
   assertNumber(props, 'retryHigh', 1)

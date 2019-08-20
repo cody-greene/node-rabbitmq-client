@@ -10,6 +10,7 @@ const Channel = require('./channel')
 const normalizeOptions = require('./normalize')
 const ChannelManager = require('./channel-manager')
 const CLIENT_PROPERTIES = (pkg => ({
+  information: pkg.homepage,
   product: pkg.name,
   version: pkg.version,
   platform: `${process.platform}-node.js-${process.version}`,
