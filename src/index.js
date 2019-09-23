@@ -1,5 +1,5 @@
 'use strict'
-const Connection = require('./connection')
+const UglyConnection = require('./connection')
 const {AMQPChannelError, AMQPConnectionError, AMQPError} = require('./exception')
 
 const PUBLIC_METHODS = [
@@ -27,7 +27,7 @@ const PUBLIC_METHODS = [
   'txSelect',
 ]
 
-class RabbitMQChannel {
+class Channel {
   constructor(ch) {
     this._ch = ch
   }
@@ -49,14 +49,14 @@ class RabbitMQChannel {
 }
 
 for (const method of PUBLIC_METHODS) {
-  RabbitMQChannel.prototype[method] = function (a, b) {
+  Channel.prototype[method] = function (a, b) {
     return this._ch[method](a, b)
   }
 }
 
-class RabbitMQConnection {
+class Connection {
   constructor(connectionOptions) {
-    this._conn = new Connection(connectionOptions)
+    this._conn = new UglyConnection(connectionOptions)
   }
   on(evtName, cb) {
     this._conn.on(evtName, cb)
@@ -71,7 +71,7 @@ class RabbitMQConnection {
     return this._conn.close()
   }
   acquire() {
-    return this._conn.acquire().then(ch => new RabbitMQChannel(ch))
+    return this._conn.acquire().then(ch => new Channel(ch))
   }
   get unblocked() {
     return this._conn.unblocked
@@ -194,7 +194,8 @@ class RabbitMQConnection {
   }
 }
 
-module.exports = Object.assign(RabbitMQConnection, {
+module.exports = Object.assign(Connection, {
+  Connection,
   AMQPChannelError,
   AMQPConnectionError,
   AMQPError,

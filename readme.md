@@ -1,4 +1,4 @@
-Look at `flow-typed/rabbitmq-client_*.js` for the full API.
+Look at `rabbitmq-client.flow.js` for the full API.
 
 Limitations:
 - does not support the "nowait" param
@@ -16,8 +16,8 @@ Notable Differences from amqplib (squaremo/amqp.node):
 
 ## Getting started
 ```
-const RabbitMQConnection = require('rabbitmq-client')
-const connection = new RabbitMQConnection('amqp://guest:guest@localhost:5672')
+const Connection = require('rabbitmq-client')
+const connection = new Connection('amqp://guest:guest@localhost:5672')
 connection.on('error', (err) => {
   // connection refused, etc
   console.error(err.stack)
@@ -37,9 +37,10 @@ connection.acquire().then(ch => {
 })
 ```
 
-This library includes some helper functions for creating publishers/consumers that combines a few of the lower level amqp methods and can recover after connection loss.
+This library includes helper functions for creating publishers/consumers. These combine a few of the lower level amqp methods and can recover after connection loss. These are much safer to use since they don't provide direct access to a channel, which would end up in the "closed" state after connection loss. Be sure to look at rabbitmq-client.flow.js for the full details.
+- Connection#createPublisher()
+- Connection#createConsumer()
 ```
-// create a dedicated channel and create some queues
 const pro = connection.createPublisher(['my-queue', 'my-other-queue'])
 
 // publish to the new queues
@@ -52,15 +53,13 @@ pro.close().catch(err => { console.error(err.stack) })
 
 
 
-// create a channel, assert a queue, set the QoS, register a consumer handler
 const consumer = connection.createConsumer({
   queue: 'my-queue',
   passive: true, // don't create the channel
   prefetchCount: 1, // consume one at a time
 }, async (msg) => {
-  // message handler
   console.log(msg)
-  // do something async
+  await smthingAsync()
 })
 
 // keep listening for messages until consumer.close()

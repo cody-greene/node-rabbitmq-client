@@ -114,6 +114,7 @@ test('connection.createPublisher (basic.return)', async (assert) => {
 test('confirm-mode channel', async (assert) => {
   const connection = await setup(assert)
   const ch = await connection.acquire()
+  refs.push(ch)
   const {queue} = await ch.queueDeclare({exclusive: true})
   await ch.confirmSelect()
   const pr = ch.basicPublish(queue, 'confirmed msg body')
@@ -128,12 +129,14 @@ test('cluster failover', async (assert) => {
   refs = []
   assert.timeoutAfter(5000)
   const url = new URL(AMQP_URL)
-  const fakeHost = 'localhost:123'
+  const fakeHost = 'localhost:12345'
   const realHost = url.hostname + ':' + url.port
   const conn = new RMQConnection({
     url: AMQP_URL,
     // should fail once, then connect to the second host
     hosts: [fakeHost, realHost],
+    username: url.username,
+    password: url.password,
   })
   assert.pass('created connection with multiple hosts')
   refs.push(conn)
