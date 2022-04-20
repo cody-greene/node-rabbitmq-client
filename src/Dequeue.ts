@@ -1,66 +1,74 @@
-'use strict'
+interface Node<T> {
+  val: undefined|T;
+  _l: null|Node<T>;
+  _r: null|Node<T>;
+}
 
 /**
  * Double-ended Queue
  * L.........R
  * head...tail
+ * @internal
  */
-class Deque {
-  constructor(src) {
+export default class Dequeue<T> {
+  private head: null|Node<T>
+  private tail: null|Node<T>
+  size: number
+  constructor(src: T[]) {
     this.head = null
     this.tail = null
     this.size = 0
     if (src) for (let val of src) this.pushRight(val)
   }
-  pushLeft(value) {
+  pushLeft(value: T) {
     let prev = this.head
     this.head = {val: value, _l: null, _r: prev}
     if (this.tail == null) this.tail = this.head
-    else prev._l = this.head
+    if (prev) prev._l = this.head
     this.size += 1
   }
-  popLeft() {
+  popLeft(): undefined|T {
     let node = this.head
     if (node == null) {
-      return null
+      return
     }
     this.head = node._r
     if (this.head == null) {
       this.tail = null
-    }
-    else {
+    } else {
       this.head._l = null
     }
     this.size -= 1
     return node.val
   }
-  pushRight(value) {
+  pushRight(value: T) {
     let prev = this.tail
     this.tail = {val: value, _l: prev, _r: null}
     if (this.head == null) this.head = this.tail
-    else prev._r = this.tail
+    if (prev) prev._r = this.tail
     this.size += 1
   }
-  popRight() {
+  popRight(): undefined|T {
     let node = this.tail
     if (node == null) {
-      return null
+      return
     }
     this.tail = node._l
     if (this.tail == null) {
       this.head = null
-    }
-    else {
+    } else {
       this.tail._r = null
     }
     this.size -= 1
     return node.val
   }
-  peekRight() {
-    return this.tail && this.tail.val
+  peekRight(): undefined|T {
+    if (this.tail)
+      return this.tail.val
   }
-  peekLeft() {
-    return this.head && this.head.val
+  peekLeft(): undefined|T {
+    if (this.head)
+      return this.head.val
   }
   *valuesLeft() {
     let node
@@ -74,7 +82,7 @@ class Deque {
       yield node
     }
   }
-  clear() {
+  clear(): T[] {
     let items = new Array(this.size)
     let cur = this.head
     let index = 0
@@ -86,7 +94,7 @@ class Deque {
     this.tail = null
     return items
   }
-  remove(el) {
+  remove(el: T): undefined|T {
     let cur = this.head
     let prv = null
     while (cur) {
@@ -102,8 +110,6 @@ class Deque {
       prv = cur
       cur = cur._r
     }
-    return null
+    return
   }
 }
-
-module.exports = Deque

@@ -1,0 +1,43 @@
+{
+  "root": true,
+  "extends": "./node_modules/@cody-greene/eslint-config/strict.yml",
+  "plugins": ["@typescript-eslint"],
+  "env": {"node": true, "es6": true},
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 2020
+  },
+  "rules": {
+    "brace-style": "off",
+    "func-call-spacing": "off",
+    "indent": "off",
+    "keyword-spacing": "off",
+    "no-dupe-class-members": "off",
+    "no-extra-semi": "off",
+    "no-loop-func": "off",
+    "no-redeclare": "off",
+    "no-undef": "off",
+    "no-unused-expressions": "off",
+    "no-unused-vars": "off",
+    "no-use-before-define": "off",
+    "object-curly-spacing": "off",
+    "quotes": "off",
+    "semi": "off",
+    "space-before-function-paren": "off",
+
+    "@typescript-eslint/brace-style": ["warn", "1tbs", {"allowSingleLine": true}],
+    "@typescript-eslint/func-call-spacing": "warn",
+    "@typescript-eslint/keyword-spacing": "warn",
+    "@typescript-eslint/no-dupe-class-members": "warn",
+    "@typescript-eslint/no-extra-semi": "warn",
+    "@typescript-eslint/no-loop-func": "warn",
+    "@typescript-eslint/no-redeclare": "error",
+    "@typescript-eslint/no-unused-expressions": "warn",
+    "@typescript-eslint/no-unused-vars": ["warn"],
+    "@typescript-eslint/no-use-before-define": ["error", {"functions": false}],
+    "@typescript-eslint/object-curly-spacing": "warn",
+    "@typescript-eslint/quotes": ["warn", "single", "avoid-escape"],
+    "@typescript-eslint/semi": ["warn", "never"],
+    "@typescript-eslint/space-before-function-paren": ["warn", {"anonymous": "always", "named": "never"}]
+  }
+}
