@@ -1,5 +1,9 @@
 ## RabbitMQ Client
 
+https://github.com/cody-greene/node-rabbitmq-client
+
+Node.js client library for [RabbitMQ](https://www.rabbitmq.com), a "message broker."
+
 - No dependencies
 - Failed connections automatically reconnect
 - Optional higher-level consumer/publisher objects for even more robustness
