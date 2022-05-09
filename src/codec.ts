@@ -83,11 +83,11 @@ const TYPE = {
     }
   },
   INT64: {
-    decode(src: Buffer, offset: number): Decoded<bigint> {
-      return [src.readBigInt64BE(offset), offset + 8]
+    decode(src: Buffer, offset: number): Decoded<number> {
+      return [Number(src.readBigInt64BE(offset)), offset + 8]
     },
-    encode(out: Buffer, val: bigint, offset: number) {
-     return out.writeBigInt64BE(val, offset)
+    encode(out: Buffer, val: number|bigint, offset: number) {
+     return out.writeBigInt64BE(BigInt(val), offset)
     }
   },
   FLOAT: {
@@ -238,7 +238,7 @@ const TYPE = {
           offset = TYPE.INT32.encode(out, val, offset)
         } else {
           offset = out.writeUInt8(108, offset) // l
-          offset = TYPE.INT64.encode(out, BigInt(val), offset)
+          offset = TYPE.INT64.encode(out, val, offset)
         }
       } else if (typeof val == 'bigint') {
         offset = out.writeUInt8(108, offset) // l

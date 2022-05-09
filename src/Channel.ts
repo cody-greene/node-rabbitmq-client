@@ -67,14 +67,14 @@ class Channel extends EventEmitter {
 
   /** @internal */
   private _state: {
-    unconfirmed: Map<bigint, Deferred<void>>,
+    unconfirmed: Map<number, Deferred<void>>,
     mode: CH_MODE
     callbacks: Map<string, DeferredParams|Dequeue<DeferredParams>>
     maxFrameSize: number
     /** For tracking consumers created with basic.consume */
     consumers: Map<string, ConsumerCallback>
     incoming?: AMQPMessage
-    deliveryCount: bigint
+    deliveryCount: number
   }
 
   /** @internal */
@@ -86,7 +86,7 @@ class Channel extends EventEmitter {
     this._state = {
       callbacks: new Map(),
       maxFrameSize: conn._opt.frameMax,
-      deliveryCount: 1n,
+      deliveryCount: 1,
       mode: CH_MODE.NORMAL,
       unconfirmed: new Map(),
       consumers: new Map()

@@ -168,7 +168,7 @@ export type SyncMethods =
 export interface MethodParams {
   'basic.ack': {
     /** The server-assigned and channel-specific delivery tag */
-    deliveryTag?: bigint,
+    deliveryTag?: number,
     /** If set to 1, the delivery tag is treated as "up to and including", so
      * that multiple messages can be acknowledged with a single method. If set
      * to zero, the delivery tag refers to a single message. If the multiple
@@ -212,7 +212,7 @@ export interface MethodParams {
     /** Identifier for the consumer, valid within the current channel. */
     consumerTag: string,
     /** The server-assigned and channel-specific delivery tag */
-    deliveryTag: bigint,
+    deliveryTag: number,
     /** Specifies the name of the exchange that the message was originally
      * published to. May be empty, indicating the default exchange. */
     exchange: string,
@@ -235,9 +235,9 @@ export interface MethodParams {
     noAck?: boolean
   },
   'basic.get-empty': void,
-  'basic.get-ok': {deliveryTag: bigint, redelivered?: boolean, exchange: string, routingKey: string, messageCount: number},
+  'basic.get-ok': {deliveryTag: number, redelivered?: boolean, exchange: string, routingKey: string, messageCount: number},
   'basic.nack': {
-    deliveryTag?: bigint,
+    deliveryTag?: number,
     /** If set to 1, the delivery tag is treated as "up to and including", so
      * that multiple messages can be rejected with a single method. If set to
      * zero, the delivery tag refers to a single message. If the multiple field
@@ -306,7 +306,7 @@ export interface MethodParams {
   },
   'basic.recover-async': {requeue?: boolean},
   'basic.recover-ok': void,
-  'basic.reject': {deliveryTag: bigint, requeue?: boolean},
+  'basic.reject': {deliveryTag: number, requeue?: boolean},
   'basic.return': {replyCode: number, replyText?: string, exchange: string, routingKey: string},
 
   'channel.close': {replyCode: number, replyText?: string, classId: number, methodId: number},
