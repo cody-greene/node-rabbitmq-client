@@ -49,6 +49,10 @@ export interface ConnectionOptions {
   vhost?: string,
   password?: string,
   username?: string,
+
+  /** Enable TLS, or set TLS specific options like overriding the CA for
+   * self-signed certificates. Automatically enabled if url starts with
+   * "amqps:" */
   tls?: boolean|TLSOptions,
 
   /** "hostname:port" of multiple nodes in a cluster */

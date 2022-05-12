@@ -35,6 +35,7 @@ declare interface Consumer {
   on(name: 'error', cb: (err: any) => void): this;
 }
 
+/** See {@link Connection.createConsumer} */
 class Consumer extends EventEmitter {
   /** @internal */
   _conn: Connection
@@ -183,8 +184,9 @@ class Consumer extends EventEmitter {
   }
 
   /** Stop consuming messages. Close the channel once all pending message
-   * handlers have settled. */
-  async close() {
+   * handlers have settled. If called while the Connection is reconnecting,
+   * then this may be delayed by {@link ConnectionOptions.acquireTimeout} */
+  async close(): Promise<void> {
     if (this._readyState === READY_STATE.CLOSED)
       return
     if (this._readyState === READY_STATE.CLOSING)

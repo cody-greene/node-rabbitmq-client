@@ -412,7 +412,8 @@ export interface MethodParams {
     /** Name of the exchange to bind to. */
     exchange: string,
     nowait?: boolean,
-    /** Specifies the name of the queue to bind. */
+    /** Specifies the name of the queue to bind. If blank, then the last
+     * declared queue on the channel will be used. */
     queue?: string,
     /** Specifies the routing key for the binding. The routing key is used for
      * routing messages depending on the exchange configuration. Not all

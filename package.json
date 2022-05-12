@@ -1,6 +1,6 @@
 {
   "name": "rabbitmq-client",
-  "version": "3.0.0-beta.2",
+  "version": "3.0.0-beta.3",
   "description": "RabbitMQ (0-9-1) client library",
   "homepage": "https://github.com/cody-greene/node-rabbitmq-client",
   "repository": {
