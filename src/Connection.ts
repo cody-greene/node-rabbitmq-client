@@ -144,7 +144,8 @@ class Connection extends EventEmitter {
 
     this._state.readyState = READY_STATE.CLOSING
     this._checkEmpty()
-    await this._state.onEmpty.promise // all channels should be closed when this resolves
+    // wait for all channels to close
+    await this._state.onEmpty.promise
 
     // might have transitioned to CLOSED while waiting for channels
     if (this._socket.writable) {
@@ -481,7 +482,7 @@ class Connection extends EventEmitter {
 
   /** @internal */
   _checkEmpty(): void {
-    if (!this._state.leased.size)
+    if (!this._state.leased.size && this._state.readyState === READY_STATE.CLOSING)
       this._state.onEmpty.resolve()
   }
 }

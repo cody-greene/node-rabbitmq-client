@@ -68,6 +68,31 @@ test('Connection#close() will gracefully end the connection', async (t) => {
   t.pass('closed connection')
 })
 
+test('Connection#close() should wait for channels to close (after reconnections)', async (t) => {
+  const rabbit = new Connection({
+    url: RABBITMQ_URL,
+    retryLow: 25
+  })
+
+  await expectEvent(rabbit, 'connection')
+  t.pass('established connection')
+
+  rabbit._socket.destroy()
+  const err = await expectEvent(rabbit, 'error')
+  t.is(err.code, 'CONN_CLOSE',
+    'connection reset')
+
+  await expectEvent(rabbit, 'connection')
+  t.pass('re-established connection')
+
+  const ch = await rabbit.acquire()
+  rabbit.close().catch(err => t.error(err))
+  await ch.confirmSelect()
+  await ch.basicQos({prefetchCount: 1})
+  await ch.close()
+  await rabbit.close()
+})
+
 test('checks for a protocol version mismatch', async (t) => {
   t.plan(3)
   // create stub server
