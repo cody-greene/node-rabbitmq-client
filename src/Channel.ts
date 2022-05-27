@@ -1,5 +1,5 @@
 import Dequeue from './Dequeue'
-import {AMQPError, AMQPChannelError} from './exception'
+import {AMQPError, AMQPChannelError, AMQPConnectionError} from './exception'
 import {createDeferred, Deferred} from './util'
 import type {AsyncMessage, BodyFrame, Envelope, HeaderFrame, MessageBody, MethodFrame, MethodParams, ReturnedMessage, SyncMessage, SyncMethods} from './types'
 import type Connection from './Connection'
@@ -153,7 +153,7 @@ class Channel extends EventEmitter {
    * Invoke all pending response handlers with an error
    * @internal
    */
-  _clear(err: Error) {
+  _clear(err: unknown) {
     if (this.id !== 0)
       this.active = false
     for (const dequeOrDfd of this._state.callbacks.values()) {
@@ -177,7 +177,8 @@ class Channel extends EventEmitter {
   /** @internal */
   _onMethod(methodFrame: MethodFrame): void {
     if (this._state.incoming != null) {
-      throw new Error('unexpected method frame, already awaiting header/body; this is a bug')
+      throw new AMQPConnectionError('UNEXPECTED_FRAME',
+        'unexpected method frame, already awaiting header/body; this is a bug')
     }
     if (['basic.deliver', 'basic.return', 'basic.get-ok'].includes(methodFrame.fullName)) {
       this._state.incoming = {methodFrame, headerFrame: undefined, chunks: undefined, received: 0}
@@ -222,7 +223,7 @@ class Channel extends EventEmitter {
   /** @internal */
   _onHeader(headerFrame: HeaderFrame): void {
     if (!this._state.incoming || this._state.incoming.headerFrame || this._state.incoming.received > 0)
-      throw new Error('unexpected header frame; this is a bug')
+      throw new AMQPConnectionError('UNEXPECTED_FRAME', 'unexpected header frame; this is a bug')
     const expectedContentFrameCount = Math.ceil(headerFrame.bodySize / (this._state.maxFrameSize - 8))
     this._state.incoming.headerFrame = headerFrame
     this._state.incoming.chunks = new Array(expectedContentFrameCount)
@@ -231,7 +232,7 @@ class Channel extends EventEmitter {
   /** @internal */
   _onBody(bodyFrame: BodyFrame): void {
     if (this._state.incoming?.chunks == null || this._state.incoming.headerFrame == null || this._state.incoming.methodFrame == null)
-      throw new Error('unexpected AMQP body frame; this is a bug')
+      throw new AMQPConnectionError('UNEXPECTED_FRAME', 'unexpected AMQP body frame; this is a bug')
     this._state.incoming.chunks[this._state.incoming.received++] = bodyFrame.payload
     if (this._state.incoming.received === this._state.incoming.chunks.length) {
       const {methodFrame, headerFrame, chunks} = this._state.incoming
@@ -244,7 +245,7 @@ class Channel extends EventEmitter {
         try {
           body = JSON.parse(body.toString())
         } catch (_) {
-          // do nothing
+          // do nothing; this is a user problem
         }
       }
 
@@ -263,7 +264,8 @@ class Channel extends EventEmitter {
         setImmediate(() => {
           const handler = this._state.consumers.get(message.consumerTag)
           if (!handler) {
-            new Error('missing handler for consumerTag ' + message.consumerTag + '; this is a bug')
+            // this is a bug; missing handler for consumerTag
+            // TODO should never happen but maybe close the channel here
           } else {
             // no try-catch; users must handle their own errors
             handler(message)
