@@ -279,7 +279,9 @@ class Connection extends EventEmitter {
       }, this._opt.connectionTimeout)
     }
 
-    //socket.on('drain', () => {})
+    socket.on('timeout', () => {
+      socket.destroy(new AMQPConnectionError('SOCKET_TIMEOUT', 'socket timed out'))
+    })
     socket.on('error', err => {
       connectionError = connectionError || err
     })
@@ -313,8 +315,8 @@ class Connection extends EventEmitter {
       }
     }
 
-    readerLoop()
     socket.write(codec.PROTOCOL_HEADER)
+    readerLoop()
 
     return socket
   }
@@ -361,12 +363,8 @@ class Connection extends EventEmitter {
     this._writeMethod(0, 'connection.open', {virtualHost: this._opt.vhost})
     await readFrame('connection.open-ok')
 
-    // create heartbeat timeout
-    if (heartbeat > 0) {
-      this._socket.setTimeout(heartbeat * 1250, () => {
-        this._socket.destroy(new AMQPConnectionError('SOCKET_TIMEOUT', 'socket timed out'))
-      })
-    }
+    // create heartbeat timeout, or disable when 0
+    this._socket.setTimeout(heartbeat * 1250)
 
     this._state.readyState = READY_STATE.OPEN
     this._state.retryCount = 0
