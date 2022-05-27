@@ -1,5 +1,5 @@
 import {AMQPConnectionError} from './exception'
-import {Readable} from 'stream'
+import {Readable, Writable} from 'stream'
 import {promisify} from 'util'
 
 /** @internal */
@@ -97,4 +97,48 @@ export function createAsyncReader(socket: Readable): (bytes: number) => Promise<
     cb = _cb
     _read()
   })
+}
+
+/**
+ * Consumes Iterators (like from a generator-fn).
+ * Writes Buffers (or whatever the iterators produce) to the output stream
+ * @internal
+ */
+export class EncoderStream<T=unknown> extends Writable {
+  private _cur?: [Iterator<T, void>, (error?: Error | null) => void]
+  private _out: Writable
+  constructor(out: Writable) {
+    super({objectMode: true})
+    this._out = out
+    this._loop = this._loop.bind(this)
+    out.on('drain', this._loop)
+  }
+  writeAsync: (it: Iterator<T, void>) => Promise<void> = promisify(this.write)
+  _destroy(err: Error | null, cb: (err?: Error | null) => void): void {
+    this._out.removeListener('drain', this._loop)
+    this._cur = undefined
+    cb(err)
+  }
+  _write(it: Iterator<T, void>, enc: unknown, cb: (error?: Error | null) => void): void {
+    this._cur = [it, cb]
+    this._loop()
+  }
+  /** Squeeze the current iterator until it's empty, but respect back-pressure. */
+  _loop(): void {
+    if (!this._cur) return
+    const [it, cb] = this._cur
+    let res
+    // @ts-ignore Added in node v15.2.0, v14.17.0
+    let ok = !this._out.writableNeedDrain
+    try {
+      while (ok && (res = it.next()) && !res.done)
+        ok = this._out.write(res.value)
+    } catch (err) {
+      return cb(err)
+    }
+    if (res?.done) {
+      this._cur = undefined
+      cb()
+    }
+  }
 }

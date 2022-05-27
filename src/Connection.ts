@@ -58,13 +58,13 @@ class Connection extends EventEmitter {
 
   /** @internal */
   _state: {
+    channelMax: number,
+    frameMax: number,
     hostIndex: number,
     retryCount: number,
     retryTimer?: NodeJS.Timeout,
     connectionTimer?: NodeJS.Timeout,
     readyState: READY_STATE,
-    /** This is a special channel for connection-level commands */
-    ch0: Channel,
     leased: SortedMap<number, Channel>,
     /** Resolved when connection is (re)established. Rejected when the connection is closed. */
     onConnect: Deferred<void>,
@@ -74,11 +74,11 @@ class Connection extends EventEmitter {
 
   constructor(propsOrUrl?: string|ConnectionOptions) {
     super()
-    this._handleChunk = this._handleChunk.bind(this)
     this._connect = this._connect.bind(this)
     this._opt = normalizeOptions(propsOrUrl)
     this._state = {
-      ch0: new Channel(0, this),
+      channelMax: this._opt.maxChannels,
+      frameMax: this._opt.frameMax,
       onEmpty: createDeferred(),
       // ignore unhandled rejection e.g. no one is waiting for a channel
       onConnect: createDeferred(true),
@@ -101,6 +101,7 @@ class Connection extends EventEmitter {
     if (this._state.readyState >= READY_STATE.CLOSING)
       throw new AMQPConnectionError('CLOSING', 'channel creation failed; connection is closing')
     if (this._state.readyState === READY_STATE.CONNECTING) {
+      // TODO also wait for connection.unblocked
       await raceWithTimeout(this._state.onConnect.promise, this._opt.acquireTimeout,
         'channel aquisition timed out')
     }
@@ -112,7 +113,7 @@ class Connection extends EventEmitter {
     // where n <= 0xffff. Which means ~16 tree nodes in the worst case. So it
     // shouldn't be noticable. And who needs that many Channels anyway!?
     const id = this._state.leased.pick()
-    if (id > this._opt.maxChannels)
+    if (id > this._state.channelMax)
       throw new Error('maximum number of AMQP Channels already open')
     const ch = new Channel(id, this)
     this._state.leased.set(id, ch)
@@ -149,7 +150,7 @@ class Connection extends EventEmitter {
 
     // might have transitioned to CLOSED while waiting for channels
     if (this._socket.writable) {
-      await this._state.ch0._invoke('connection.close', {replyCode: 200, classId: 0, methodId: 0})
+      this._writeMethod(0, 'connection.close', {replyCode: 200, classId: 0, methodId: 0})
       this._socket.end()
       await new Promise(resolve => this._socket.once('close', resolve))
     }
@@ -290,7 +291,8 @@ class Connection extends EventEmitter {
         this._state.readyState = READY_STATE.CLOSED
         this._reset(connectionError || new AMQPConnectionError('CLOSING', 'connection is closed'))
       } else {
-        connectionError = connectionError || new AMQPConnectionError('CONN_CLOSE', 'socket closed unexpectedly by server')
+        connectionError = connectionError || new AMQPConnectionError('CONN_CLOSE',
+          'socket closed unexpectedly by server')
         if (this._state.readyState === READY_STATE.OPEN)
           this._state.onConnect = createDeferred(true)
         this._state.readyState = READY_STATE.CONNECTING
@@ -355,9 +357,11 @@ class Connection extends EventEmitter {
     const channelMax = params.channelMax > 0
       ? Math.min(this._opt.maxChannels, params.channelMax)
       : this._opt.maxChannels
+    this._state.channelMax = channelMax
     const frameMax = params.frameMax > 0
       ? Math.min(this._opt.frameMax, params.frameMax)
       : this._opt.frameMax
+    this._state.frameMax = frameMax
     const heartbeat = determineHeartbeat(params.heartbeat, this._opt.heartbeat)
     this._writeMethod(0, 'connection.tune-ok', {channelMax, frameMax, heartbeat})
     this._writeMethod(0, 'connection.open', {virtualHost: this._opt.vhost})
@@ -383,76 +387,39 @@ class Connection extends EventEmitter {
   }
 
   /** @internal */
-  _writeContent(channelId: number, params: Envelope, body: Buffer): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // TODO pause for connection.unblocked & socket.on('drain') but don't wait forever
-      this._writeMethod(channelId, 'basic.publish', params)
-      const maxSize = this._opt.frameMax - 8
-      const totalContentFrames = Math.ceil(body.length / maxSize)
-      const headerFrame = codec.encodeFrame({
-        type: 'header',
-        channelId,
-        className: 'basic',
-        bodySize: body.length,
-        fields: params
-      })
-      if (totalContentFrames > 0)
-        this._socket.write(headerFrame)
-      else
-        this._socket.write(headerFrame, err => err ? reject(err) : resolve())
-      for (let index = 0; index < totalContentFrames; index++) {
-        const offset = maxSize * index
-        const bodyFrame = codec.encodeFrame({
-          type: 'body',
-          channelId,
-          payload: body.slice(offset, offset+maxSize)
-        })
-        if (index < totalContentFrames - 1) {
-          // TODO check return value of write() and wait for drain event if false
-          this._socket.write(bodyFrame)
-        } else {
-          this._socket.write(bodyFrame, err => err ? reject(err) : resolve())
-        }
-      }
-    })
-  }
-
-  /** @internal */
   private _handleChunk(evt: DataFrame): void {
     let ch: Channel|undefined
     if (evt) {
       if (evt.type === 'heartbeat') {
-        // TODO if connection.blocked then heartbeat monitoring is disabled; don't respond
-        this._socket.write(codec.HEARTBEAT_FRAME)
+        // if connection.blocked then heartbeat monitoring is disabled; don't respond
+        if (!this._socket.writableCorked) this._socket.write(codec.HEARTBEAT_FRAME)
       } else if (evt.type === 'method') {
         switch (evt.fullName) {
           case 'connection.close':
-            this._state.ch0._invokeNowait('connection.close-ok', undefined)
-            this._socket.end()
+            if (this._socket.writable) {
+              this._writeMethod(0, 'connection.close-ok', undefined)
+              this._socket.end()
+              this._socket.uncork()
+            }
             this._socket.emit('error', new AMQPConnectionError(evt.params))
             break
+          case 'connection.close-ok':
+            // just wait for the socket to fully close
+            break
           case 'connection.blocked':
+            this._socket.cork()
             this.emit('connection.blocked', evt.params.reason)
             break
           case 'connection.unblocked':
+            this._socket.uncork()
             this.emit('connection.unblocked')
             break
-          case 'channel.close':
-            this._writeMethod(evt.channelId, 'channel.close-ok', undefined)
-            ch = this._state.leased.get(evt.channelId)
-            if (ch != null) {
-              this._state.leased.delete(ch.id)
-              ch._clear(new AMQPChannelError(evt.params))
-              this._checkEmpty()
-            }
-            break
           default:
-            ch = evt.channelId === 0 ? this._state.ch0 : this._state.leased.get(evt.channelId)
+            ch = this._state.leased.get(evt.channelId)
             if (ch == null) {
               // TODO test me
-              this._socket.destroy(new AMQPConnectionError('CHANNEL_ERROR',
-                'client received a method frame for an unexpected channel'))
-              return
+              throw new AMQPConnectionError('UNEXPECTED_FRAME',
+                'client received a method frame for an unexpected channel')
             }
             ch._onMethod(evt)
         }
@@ -460,18 +427,16 @@ class Connection extends EventEmitter {
         const ch = this._state.leased.get(evt.channelId)
         if (ch == null) {
           // TODO test me
-          this._socket.destroy(new AMQPConnectionError('CHANNEL_ERROR',
-            'client received a header frame for an unexpected channel'))
-          return
+          throw new AMQPConnectionError('UNEXPECTED_FRAME',
+            'client received a header frame for an unexpected channel')
         }
         ch._onHeader(evt)
       } else if (evt.type === 'body') {
         const ch = this._state.leased.get(evt.channelId)
         if (ch == null) {
           // TODO test me
-          this._socket.destroy(new AMQPConnectionError('CHANNEL_ERROR',
-            'client received a body frame for an unexpected channel'))
-          return
+          throw new AMQPConnectionError('UNEXPECTED_FRAME',
+            'client received a body frame for an unexpected channel')
         }
         ch._onBody(evt)
       }
@@ -480,7 +445,6 @@ class Connection extends EventEmitter {
 
   /** @internal */
   private _reset(err: Error): void {
-    this._state.ch0._clear(err)
     for (let ch of this._state.leased.values())
       ch._clear(err)
     this._state.leased.clear()

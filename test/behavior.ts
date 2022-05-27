@@ -4,8 +4,11 @@ import {createServer} from 'net'
 import {createDeferred, Deferred} from '../src/util'
 import {MethodFrame} from '../src/types'
 import {useFakeServer, expectEvent, sleep} from './util'
+import {randomBytes} from 'crypto'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
+
+test.onFailure(() => process.exit())
 
 test('can publish and get messages', async (t) => {
   t.plan(5)
@@ -149,7 +152,6 @@ test('[opt.connectionTimeout] is a time limit on each connection attempt', async
   await rabbit.close()
 })
 
-
 test('will reconnect when connection.close is received from the server', async (t) => {
   const [port, server] = await useFakeServer([
     async (socket, next) => {
@@ -243,6 +245,78 @@ test('handles channel errors', async (t) => {
   await rabbit.close()
 })
 
+test('publish with confirms are rejected with channel error', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+  await ch.confirmSelect()
+  const pending = [
+    ch.basicPublish({routingKey: '__not_found_9a1e1bba7f62571d__'}, ''),
+    ch.basicPublish({routingKey: '__not_found_9a1e1bba7f62571d__', exchange: '__not_found_9a1e1bba7f62571d__'}, ''),
+    ch.basicPublish({routingKey: '__not_found_9a1e1bba7f62571d__'}, ''),
+  ]
+  const [r0, r1, r2] = await Promise.allSettled(pending)
+
+  t.is(r0.status, 'fulfilled', '1st publish ok')
+  // should be rejected because the exchange does not exist
+  if (r1.status === 'rejected')
+    t.is(r1.reason.code, 'NOT_FOUND', '2nd publish rejected')
+  else t.fail('2nd publish should fail')
+  // remaining unconfirmed publishes should just get CH_CLOSE
+  if (r2.status === 'rejected')
+    t.is(r2.reason.code, 'CH_CLOSE', '3rd publish rejected')
+  else t.fail('3rd publish should fail')
+  t.is(ch.active, false, 'channel is dead')
+
+  await ch.close()
+  await rabbit.close()
+})
+
+test('publish without confirms should emit channel errors on the Connection', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+  await ch.basicPublish({routingKey: '__not_found_9a1e1bba7f62571d__', exchange: '__not_found_9a1e1bba7f62571d__'}, '')
+  const err = await expectEvent(rabbit, 'error')
+  t.is(err.code, 'NOT_FOUND', 'emitted error')
+  await rabbit.close()
+})
+
+test('basic.ack can emit channel errors', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+  ch.basicAck({deliveryTag: 1}) // does not return a Promise
+  const err = await expectEvent(rabbit, 'error')
+  t.is(err.code, 'PRECONDITION_FAILED', 'unknown delivery tag')
+  await rabbit.close()
+})
+
+test('basic.ack can emit codec errors', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+  // @ts-ignore intentional error
+  ch.basicAck({deliveryTag: 'not a number'}) // does not return a Promise
+  const err = await expectEvent(rabbit, 'error')
+  t.assert(err instanceof SyntaxError, 'got encoding error')
+  await rabbit.close()
+})
+
+test('handles encoder errors', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+
+  t.is(ch.id, 1, 'got a channel')
+  const emptyParams: any = {}
+  const err = await ch.basicCancel(emptyParams).catch(err => err)
+  t.is(err.message, 'basic.cancel consumerTag (a required param) is undefined')
+
+  await expectEvent(ch, 'close')
+  const other = await rabbit.acquire()
+  t.is(other.id, ch.id,
+    'created a new channel with the same id (old channel was properly closed)')
+
+  await other.close()
+  await rabbit.close()
+})
+
 test('[opt.heartbeat] creates a timeout to detect a dead socket', async (t) => {
   t.plan(4)
 
@@ -296,7 +370,6 @@ test('can create a basic consumer', async (t) => {
   })
   t.pass('created basic consumer')
 
-
   const [m1, m2] = await Promise.all(expectedMessages.map(dfd => dfd.promise))
   t.is(m1.body, 'red data')
   t.is(m2.body, 'black data')
@@ -323,6 +396,38 @@ test('emits basic.return with rejected messages', async (t) => {
     'msg is unroutable')
 
   await ch.close()
+  await rabbit.close()
+})
+
+test('handles zero-length returned messages', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+  const payload = Buffer.alloc(0)
+  await ch.basicPublish({mandatory: true, routingKey: '__not_found_7953ec8de0da686e__'}, payload)
+  const msg = await expectEvent(ch, 'basic.return')
+  t.is(msg.replyText, 'NO_ROUTE', 'message returned')
+  t.is(msg.body.byteLength, 0, 'body is empty')
+
+  await ch.close()
+  await rabbit.close()
+})
+
+test('[opt.maxChannels] can cause acquire() to fail', async (t) => {
+  const rabbit = new Connection({
+    url: RABBITMQ_URL,
+    maxChannels: 1
+  })
+
+  const [r0, r1] = await Promise.allSettled([
+    rabbit.acquire(),
+    rabbit.acquire()
+  ])
+
+  t.is(r0.status, 'fulfilled', 'ch 1 acquired')
+  t.is(r1.status, 'rejected', 'ch 2 unavailable')
+
+  if (r0.status === 'fulfilled') await r0.value.close()
+  if (r1.status === 'fulfilled') await r1.value.close()
   await rabbit.close()
 })
 
@@ -498,7 +603,7 @@ test('Connection#createPublisher()', async (t) => {
   await rabbit.close()
 })
 
-test('Connection#createPublisher() concurrent publishes should trigger only one setup', async (t) => {
+test('Connection#createPublisher() concurrent publishes should trigger one setup', async (t) => {
   const rabbit = new Connection(RABBITMQ_URL)
   const pro = rabbit.createPublisher()
 
@@ -508,12 +613,13 @@ test('Connection#createPublisher() concurrent publishes should trigger only one 
   ])
 
   t.is(rabbit._state.leased.size, 1,
-    'only one channel created')
+    'one channel created')
 
   await pro.close()
   await rabbit.close()
 })
 
+// TODO opt.frameMax
 // TODO frame errors / unexpected channel
 // TODO codec
 // TODO cluster failover

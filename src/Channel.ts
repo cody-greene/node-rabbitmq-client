@@ -1,9 +1,11 @@
 import Dequeue from './Dequeue'
 import {AMQPError, AMQPChannelError, AMQPConnectionError} from './exception'
-import {createDeferred, Deferred} from './util'
+import {createDeferred, Deferred, EncoderStream} from './util'
 import type {AsyncMessage, BodyFrame, Envelope, HeaderFrame, MessageBody, MethodFrame, MethodParams, ReturnedMessage, SyncMessage, SyncMethods} from './types'
 import type Connection from './Connection'
 import EventEmitter from 'events'
+import {genContentFrames, genMethodFrame} from './codec'
+import SPEC from './spec'
 
 enum CH_MODE {NORMAL, TRANSACTION, CONFIRM}
 
@@ -62,12 +64,13 @@ class Channel extends EventEmitter {
   /** @internal */
   private _conn: Connection
   readonly id: number
+
   /** False if the channel is closed */
   active: boolean
 
   /** @internal */
   private _state: {
-    unconfirmed: Map<number, Deferred<void>>,
+    unconfirmed: Map<number, Deferred<void>>
     mode: CH_MODE
     callbacks: Map<string, DeferredParams|Dequeue<DeferredParams>>
     maxFrameSize: number
@@ -75,6 +78,12 @@ class Channel extends EventEmitter {
     consumers: Map<string, ConsumerCallback>
     incoming?: AMQPMessage
     deliveryCount: number
+    /**
+     * Ensures a channel can only publish one message at a time.
+     * Multiple channels may interleave their DataFrames, but for any given channel
+     * the header/body frames MUST follow a basic.publish
+     */
+    stream: EncoderStream<Buffer>
   }
 
   /** @internal */
@@ -89,8 +98,15 @@ class Channel extends EventEmitter {
       deliveryCount: 1,
       mode: CH_MODE.NORMAL,
       unconfirmed: new Map(),
-      consumers: new Map()
+      consumers: new Map(),
+      stream: new EncoderStream(conn._socket)
     }
+    this._state.stream.on('error', async () => {
+      // don't need to propagate error here:
+      // - if connection ended: already handled by the Connection class
+      // - if encoding error: error recieved by write callback
+      this.close()
+    })
   }
 
   /** Close the channel */
@@ -100,11 +116,22 @@ class Channel extends EventEmitter {
     }
     try {
       this.active = false
-      this._conn._writeMethod(this.id, 'channel.close', {replyCode: 200, classId: 0, methodId: 0})
-      await this._addReplyListener('channel.close-ok')
+      if (this._state.stream.writable) {
+        this._state.stream.end()
+        // should resolve if the stream drains and ends
+        // or if _clear() is called on connection or channel error
+        await new Promise<void>(resolve => this._state.stream.on('close', resolve))
+      }
+      // write directly to the connection in case the channel stream encountered a codec error
+      this._conn._writeMethod(this.id, 'channel.close',
+        {replyCode: 200, classId: 0, methodId: 0})
+      await this._addCallback('channel.close-ok')
+    } catch (err) {
+      // ignored; if write fails because the connection closed then this is
+      // technically a success. Can't have a channel without a connection!
     } finally {
       this._conn._state.leased.delete(this.id)
-      this._clear(new AMQPChannelError('CH_CLOSE', 'channel is closed'))
+      this._clear()
       this._conn._checkEmpty()
     }
   }
@@ -113,7 +140,7 @@ class Channel extends EventEmitter {
    * Save a handler (run-once) for an AMQP synchronous method response
    * @internal
    */
-  _addReplyListener<T extends keyof MethodParams>(classMethod: T): Promise<Required<MethodParams[T]>> {
+  _addCallback<T extends keyof MethodParams>(classMethod: T): Promise<Required<MethodParams[T]>> {
     const dfd = createDeferred()
     let dequeOrDfd = this._state.callbacks.get(classMethod)
     if (dequeOrDfd == null) {
@@ -127,7 +154,7 @@ class Channel extends EventEmitter {
   }
 
   /** @internal */
-  _callReplyListener<T extends keyof MethodParams>(classMethod: T, params: MethodParams[T]) {
+  _resolveCallback<T extends keyof MethodParams>(classMethod: T, params: MethodParams[T]) {
     const dequeOrDfd = this._state.callbacks.get(classMethod)
     if (dequeOrDfd == null) {
       // this is a bug; should never happen
@@ -149,13 +176,46 @@ class Channel extends EventEmitter {
     }
   }
 
+  /** @internal Try to reject a pending callback or emit the error */
+  _rejectCallback(key: string, err: any) {
+    if (typeof key == 'string') {
+      if (key === 'basic.publish') {
+        // try to reject first unconfirmed message
+        for (const [tag, dfd] of this._state.unconfirmed.entries()) {
+          this._state.unconfirmed.delete(tag)
+          dfd.reject(err)
+          return
+        }
+      } else {
+        key = key + '-ok'
+      }
+    }
+    const collection = this._state.callbacks
+    const dequeOrDfd = collection.get(key)
+    if (dequeOrDfd == null) {
+      this._conn.emit('error', err)
+    } else if (dequeOrDfd instanceof Dequeue) {
+      const dfd = dequeOrDfd.popLeft()
+      if (dfd == null)
+        this._conn.emit('error', err)
+      else
+        dfd.reject(err)
+      if (dequeOrDfd.size < 1)
+        collection.delete(key)
+    } else {
+      collection.delete(key)
+      dequeOrDfd.reject(err)
+    }
+  }
+
   /**
    * Invoke all pending response handlers with an error
    * @internal
    */
-  _clear(err: unknown) {
-    if (this.id !== 0)
-      this.active = false
+  _clear(err?: Error) {
+    if (err == null)
+      err = new AMQPChannelError('CH_CLOSE', 'channel is closed')
+    this.active = false
     for (const dequeOrDfd of this._state.callbacks.values()) {
       if (dequeOrDfd instanceof Dequeue) {
         for (const dfd of dequeOrDfd.valuesLeft()) {
@@ -171,6 +231,7 @@ class Channel extends EventEmitter {
     this._state.callbacks.clear()
     this._state.consumers.clear()
     this._state.unconfirmed.clear()
+    this._state.stream.destroy(err)
     this.emit('close')
   }
 
@@ -184,7 +245,7 @@ class Channel extends EventEmitter {
       this._state.incoming = {methodFrame, headerFrame: undefined, chunks: undefined, received: 0}
     } else if (methodFrame.fullName === 'basic.get-empty') {
       // @ts-ignore special case since basic.get-empty is a valid response for basic.get
-      this._callReplyListener('basic.get-ok', undefined)
+      this._resolveCallback('basic.get-ok', undefined)
     } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.fullName === 'basic.ack') {
       const params: Required<MethodParams['basic.ack']> = methodFrame.params as any
       if (params.multiple) {
@@ -227,9 +288,16 @@ class Channel extends EventEmitter {
       setImmediate(() => {
         this.emit('basic.cancel', params.consumerTag, new AMQPError('CANCEL_FORCED', 'cancelled by server'))
       })
+    } else if (methodFrame.fullName === 'channel.close') {
+      const err = new AMQPChannelError(methodFrame.params)
+      this._rejectCallback(SPEC.getFullName(methodFrame.params.classId, methodFrame.params.methodId), err)
+      this._clear()
+      this._conn._writeMethod(methodFrame.channelId, 'channel.close-ok', undefined)
+      this._conn._state.leased.delete(this.id)
+      this._conn._checkEmpty()
     //} else if (methodFrame.fullName === 'channel.flow') unsupported; https://blog.rabbitmq.com/posts/2014/04/breaking-things-with-rabbitmq-3-3
     } else {
-      this._callReplyListener(methodFrame.fullName, methodFrame.params)
+      this._resolveCallback(methodFrame.fullName, methodFrame.params)
     }
   }
 
@@ -240,13 +308,16 @@ class Channel extends EventEmitter {
     const expectedContentFrameCount = Math.ceil(headerFrame.bodySize / (this._state.maxFrameSize - 8))
     this._state.incoming.headerFrame = headerFrame
     this._state.incoming.chunks = new Array(expectedContentFrameCount)
+    if (expectedContentFrameCount === 0)
+      this._onBody()
   }
 
   /** @internal */
-  _onBody(bodyFrame: BodyFrame): void {
+  _onBody(bodyFrame?: BodyFrame): void {
     if (this._state.incoming?.chunks == null || this._state.incoming.headerFrame == null || this._state.incoming.methodFrame == null)
       throw new AMQPConnectionError('UNEXPECTED_FRAME', 'unexpected AMQP body frame; this is a bug')
-    this._state.incoming.chunks[this._state.incoming.received++] = bodyFrame.payload
+    if (bodyFrame)
+      this._state.incoming.chunks[this._state.incoming.received++] = bodyFrame.payload
     if (this._state.incoming.received === this._state.incoming.chunks.length) {
       const {methodFrame, headerFrame, chunks} = this._state.incoming
       this._state.incoming = undefined
@@ -289,30 +360,35 @@ class Channel extends EventEmitter {
           this.emit('basic.return', uncastMessage) // ReturnedMessage
         })
       } else if (methodFrame.fullName === 'basic.get-ok') {
-        this._callReplyListener(methodFrame.fullName, uncastMessage) // SyncMessage
+        this._resolveCallback(methodFrame.fullName, uncastMessage) // SyncMessage
       }
     }
   }
 
   /** @internal */
-  _invoke<T extends SyncMethods>(fullName: T, params: MethodParams[T]): Promise<any> {
+  async _invoke<T extends SyncMethods>(fullName: T, params: MethodParams[T]): Promise<any> {
     if (!this.active) return activeCheckPromise()
-    this._conn._writeMethod(this.id, fullName, params)
+    const it = genMethodFrame(this.id, fullName, params)
+    await this._state.stream.writeAsync(it)
     // n.b. nowait is problematic for queue.declare and basic.consume since these
     // can generate random names (queue & consumerTag)
-    // @ts-ignore
+    // @ts-ignore not all methods have the "nowait" param
     if (params?.nowait && NOWAIT_METHODS.includes(fullName))
-      return Promise.resolve()
+      return
     // @ts-ignore MethodParams<T-ok>
-    return this._addReplyListener(fullName + '-ok')
+    return this._addCallback(fullName + '-ok')
   }
 
   /** @internal */
   _invokeNowait<T extends keyof MethodParams>(fullName: T, params: MethodParams[T]): void {
-    if (!this.active) {
+    if (!this.active)
       throw new AMQPChannelError('CH_CLOSE', 'channel is closed')
-    }
-    this._conn._writeMethod(this.id, fullName, params)
+    this._state.stream.write(genMethodFrame(this.id, fullName, params), (err) => {
+      if (err) {
+        err.message += '; ' + fullName
+        this._conn.emit('error', err)
+      }
+    })
   }
 
   /**
@@ -346,7 +422,7 @@ class Channel extends EventEmitter {
       params.contentType = 'application/json'
       params.contentEncoding = undefined
     }
-    await this._conn._writeContent(this.id, params, body)
+    await this._state.stream.writeAsync(genContentFrames(this.id, params, body, this._state.maxFrameSize))
     if (this._state.mode === CH_MODE.CONFIRM) {
       // wait for basic.ack or basic.nack
       // note: Unroutable mandatory messages are acknowledged right
@@ -374,15 +450,14 @@ class Channel extends EventEmitter {
   }
 
   /** End a queue consumer. */
-  basicCancel(params: string|MethodParams['basic.cancel']): Promise<Required<MethodParams['basic.cancel-ok']>> {
-    if (!this.active) return activeCheckPromise()
+  async basicCancel(params: string|MethodParams['basic.cancel']): Promise<Required<MethodParams['basic.cancel-ok']>> {
     if (typeof params == 'string') {
       params = {consumerTag: params}
     }
-    this._state.consumers.delete(params.consumerTag)
     // note: server may send a few messages before basic.cancel-ok is returned
-    this._conn._writeMethod(this.id, 'basic.cancel', params)
-    return this._addReplyListener('basic.cancel-ok')
+    const res = await this._invoke('basic.cancel', params)
+    this._state.consumers.delete(params.consumerTag)
+    return res
   }
 
   /**
@@ -391,9 +466,7 @@ class Channel extends EventEmitter {
    * https://www.rabbitmq.com/confirms.html#publisher-confirms
    */
   async confirmSelect(): Promise<void> {
-    if (!this.active) return activeCheckPromise()
-    this._conn._writeMethod(this.id, 'confirm.select', {})
-    await this._addReplyListener('confirm.select-ok')
+    await this._invoke('confirm.select', {})
     this._state.mode = CH_MODE.CONFIRM
   }
 
@@ -403,9 +476,7 @@ class Channel extends EventEmitter {
    * Rollback methods.
    */
   async txSelect(): Promise<void> {
-    if (!this.active) return activeCheckPromise()
-    this._conn._writeMethod(this.id, 'tx.select', undefined)
-    await this._addReplyListener('tx.select-ok')
+    await this._invoke('tx.select', undefined)
     this._state.mode = CH_MODE.TRANSACTION
   }
 

@@ -8,10 +8,10 @@ Why not amqplib?
 - No dependencies
 - Failed connections automatically reconnect
 - Optional higher-level consumer/publisher objects for even more robustness
-- Written in typescript
+- Written in typescript and published with heavily commented type definitions
 - [See here for full API documentation](http://cody-greene.github.io/node-rabbitmq-client)
 - Uses native Promises
-- Uses named args instead of positional arguments
+- Intuitive API with named parameters instead of positional
 - "x-arguments" like "x-message-ttl" don't have camelCase aliases
 
 ## Getting started
@@ -38,6 +38,11 @@ rabbit.on('connection', () => {
 async function run() {
   // will wait for the connection to establish before creating a Channel
   const ch = await rabbit.acquire()
+
+  // channels can emit some events too
+  ch.on('close', () => {
+    console.log('channel was closed')
+  })
 
   // create a queue for the duration of this connection
   await ch.queueDeclare({queue: 'my-queue', exclusive: true})
@@ -117,6 +122,11 @@ const consumer = rabbit.createConsumer({
   // msg is automatically acknowledged when this function resolves or msg is
   // rejected (and maybe requeued, or sent to a dead-letter-exchange) if this
   // function throws an error
+})
+
+// maybe the consumer was cancelled, or a message wasn't acknowledged
+consumer.on('error', (err) => {
+  console.log('consumer error', err)
 })
 
 // if we want to stop our application gracefully then we can stop consuming

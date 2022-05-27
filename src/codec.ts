@@ -2,9 +2,10 @@
  * This module encodes to, and decodes from, the AMQP binary protocol
  */
 import assert from 'assert'
+import {Writable} from 'stream'
 import {AMQPConnectionError} from './exception'
 import SPEC from './spec'
-import type {HeaderFrame, MethodFrame, DataFrame, Decimal} from './types'
+import type {HeaderFrame, MethodFrame, DataFrame, Decimal, MethodParams, Envelope} from './types'
 
 const hasOwn = Object.prototype.hasOwnProperty
 /**
@@ -477,7 +478,7 @@ async function decodeFrame(read: (bytes: number) => Promise<Buffer>): Promise<Da
   const channelId = chunk.readUint16BE(1)
   const frameSize = chunk.readUint32BE(3)
   const payloadBuffer = await read(frameSize + 1)
-  if (payloadBuffer[frameSize] !== 206)
+  if (payloadBuffer[frameSize] !== SPEC.FRAME_END)
     throw new AMQPConnectionError('FRAME_ERROR', 'invalid FRAME_END octet: ' + payloadBuffer[frameSize])
   if (frameTypeId === SPEC.FRAME_METHOD) {
     const payload = decodeMethodPayload(payloadBuffer, 0)
@@ -536,10 +537,48 @@ function encodeFrame(data: DataFrame): Buffer {
 }
 
 /** @internal */
+function* genMethodFrame<T extends keyof MethodParams>(channelId: number, fullName: T, params: MethodParams[T]): Generator<Buffer, void> {
+  const [className, methodName] = fullName.split('.')
+  yield encodeFrame({type: 'method', channelId, className, methodName, fullName, params})
+}
+
+/** @internal Allocate DataFrame buffers on demand, right before writing to the socket */
+function* genContentFrames(channelId: number, params: Envelope, body: Buffer, frameMax: number): Generator<Buffer, void> {
+  yield encodeFrame({
+    type: 'method',
+    channelId,
+    className: 'basic',
+    methodName: 'publish',
+    fullName: 'basic.publish',
+    params
+  })
+  const maxSize = frameMax - 8
+  const totalContentFrames = Math.ceil(body.length / maxSize)
+  const headerFrame = encodeFrame({
+    type: 'header',
+    channelId,
+    className: 'basic',
+    bodySize: body.length,
+    fields: params
+  })
+  yield headerFrame
+  for (let index = 0; index < totalContentFrames; ++index) {
+    const offset = maxSize * index
+    yield encodeFrame({
+      type: 'body',
+      channelId,
+      payload: body.slice(offset, offset+maxSize)
+    })
+  }
+}
+
+/** @internal */
 export {
   PROTOCOL_HEADER,
   HEARTBEAT_FRAME,
   decodeFrame,
   encodeFrame,
+  genMethodFrame,
+  genContentFrames,
   TYPE, // for testing
 }

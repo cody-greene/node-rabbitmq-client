@@ -18,10 +18,9 @@ class AMQPError extends Error {
       // connection.close or channel.close event
       let params = code
       code = spec.statusCodes.get(params.replyCode) || 'UNKNOWN'
-      const classDef = spec.classById.get(params.classId)
-      const methodDef = classDef?.methodById.get(params.methodId)
-      if (classDef && methodDef) {
-        this.message = `${params.replyText}; ${classDef.name}.${methodDef.name}`
+      const fullName = spec.getFullName(params.classId, params.methodId)
+      if (fullName) {
+        this.message = `${params.replyText}; ${fullName}`
       } else {
         this.message = params.replyText
       }

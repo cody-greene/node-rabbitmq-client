@@ -50,6 +50,13 @@ const SPEC = {
     [540, 'NOT_IMPLEMENTED'],
     [541, 'INTERNAL_ERROR'],
   ]),
+  getFullName(classId: number, methodId: number): string {
+    const classDef = this.classById.get(classId)
+    const methodDef = classDef?.methodById.get(methodId)
+    if (classDef && methodDef)
+      return classDef.name + '.' + methodDef.name
+    return ''
+  },
   classById: new Map<number, AMQPClass>(),
   classByName: new Map<string, AMQPClass>(),
   classes: [{

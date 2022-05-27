@@ -1,6 +1,6 @@
 import test from 'tape'
-import {sleep} from './util'
-import {createAsyncReader} from '../src/util'
+import {expectEvent, sleep} from './util'
+import {createAsyncReader, EncoderStream} from '../src/util'
 import {Readable, Writable} from 'stream'
 
 /** Create a Readable stream with configurable speed */
@@ -72,4 +72,77 @@ test('createAsyncReader() handles a destroyed/errored stream', async (t) => {
     t.is(err.code, 'READ_END', 'read rejected')
   }
   t.is(stream.readable, false, 'stream is closed')
+})
+
+class StubSocket extends Writable {
+  _cur?: [any, (error?: Error | null) => void]
+  _write(chunk: any, enc: unknown, cb: (error?: Error | null) => void) {
+    this._cur = [chunk, cb]
+  }
+  read(): any {
+    if (!this._cur) return null
+    const [chunk, cb] = this._cur
+    this._cur = undefined
+    cb()
+    return chunk
+  }
+}
+
+test('EncodeStream', async (t) => {
+  const socket = new StubSocket({objectMode: true, highWaterMark: 2})
+  const stream = new EncoderStream<string>(socket)
+
+  t.comment('should write everything if allowed')
+  stream.write(['red', 'orange'].values())
+  t.is(socket.writableLength, 2)
+  t.is(socket.read(), 'red')
+  t.is(socket.writableLength, 1)
+  t.is(socket.read(), 'orange')
+  t.is(socket.writableLength, 0)
+  t.is(stream.writableLength, 0)
+
+  t.comment('should complete more than one iterator')
+  stream.write(['green'].values())
+  t.is(socket.read(), 'green')
+
+  t.comment('should pause when encountering back-pressure')
+  stream.write(['blue', 'indigo', 'violet'].values())
+  t.is(socket.writableLength, 2)
+  t.is(socket.read(), 'blue')
+  t.is(socket.writableLength, 1, 'no writes until fully drained')
+  t.is(socket.read(), 'indigo')
+  t.is(socket.read(), 'violet')
+  t.is(socket.writableLength, 0)
+
+  t.comment('should not write at all if the destination is already full')
+  stream.write(['thalia', 'calliope'].values())
+  t.is(socket.writableLength, 2)
+  stream.write(['erato'].values())
+  t.is(socket.writableLength, 2)
+  t.is(socket.read(), 'thalia')
+  t.is(socket.read(), 'calliope')
+  t.is(socket.read(), 'erato')
+
+  await stream.writeAsync(['orpheus'].values())
+  t.is(socket.read(), 'orpheus', 'writeAsync() works')
+
+  t.comment('should catch iterator errors')
+  stream.write(function*(){
+    throw new Error('bad news')
+  }())
+  const err = await expectEvent(stream, 'error')
+  t.is(err.message, 'bad news', 'emitted error')
+  t.is(stream.writable, false, 'stream is dead')
+})
+
+test('EncoderStream should stop writing when destroyed', async (t) => {
+  const socket = new StubSocket({objectMode: true, highWaterMark: 2})
+  const stream = new EncoderStream<string>(socket)
+
+  stream.write(['red', 'blue', 'green'].values())
+  t.is(socket.writableLength, 2)
+  stream.destroy()
+  t.is(socket.read(), 'red')
+  t.is(socket.read(), 'blue')
+  t.is(socket.read(), null, 'green should not be written')
 })

@@ -20,7 +20,7 @@ export interface ConnectionOptions {
   connectionName?: string,
   /** (default=10000) Max wait time, in milliseconds, for a connection attempt */
   connectionTimeout?: number,
-  /** (default=131072) Max size, in bytes, of AMQP data frames. Protocol max is
+  /** (default=4096) Max size, in bytes, of AMQP data frames. Protocol max is
    * 2^32-1. Actual value is negotiated with the server. */
   frameMax?: number,
   /** (default=60) Period of time, in seconds, after which the TCP connection
