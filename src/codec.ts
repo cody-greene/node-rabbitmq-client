@@ -2,6 +2,7 @@
  * This module encodes to, and decodes from, the AMQP binary protocol
  */
 import assert from 'assert'
+import {AMQPConnectionError} from './exception'
 import SPEC from './spec'
 import type {HeaderFrame, MethodFrame, DataFrame, Decimal} from './types'
 
@@ -470,45 +471,39 @@ function encodeMethodPayload(out: Buffer, {className, methodName, params}: Metho
 }
 
 /** @internal */
-function decodeFrame(src: Buffer): [DataFrame, Buffer|null] {
-  const type = src.readUInt8(0)
-  const channelId = src.readUInt16BE(1)
-  const [payloadBuffer, offset] = TYPE.VARBIN32.decode(src, 3)
-  const frameEnd = src.readUInt8(offset)
-  assert(frameEnd === SPEC.FRAME_END, 'invalid FRAME_END octet: ' + frameEnd)
-  const rest = src.length > offset + 1 ? src.slice(offset + 1) : null
-  if (type === SPEC.FRAME_METHOD) {
-    try {
-      const payload = decodeMethodPayload(payloadBuffer, 0)
-      return [{
-        type: 'method',
-        channelId: channelId,
-        className: payload.className,
-        methodName: payload.methodName,
-        fullName: (payload.className + '.' + payload.methodName) as any,
-        params: payload.params
-      }, rest]
-    } catch (err) {
-      if (err instanceof RangeError) {
-        throw new Error('invalid method payload')
-      }
-      throw err
+async function decodeFrame(read: (bytes: number) => Promise<Buffer>): Promise<DataFrame> {
+  const chunk = await read(7)
+  const frameTypeId = chunk.readUint8(0)
+  const channelId = chunk.readUint16BE(1)
+  const frameSize = chunk.readUint32BE(3)
+  const payloadBuffer = await read(frameSize + 1)
+  if (payloadBuffer[frameSize] !== 206)
+    throw new AMQPConnectionError('FRAME_ERROR', 'invalid FRAME_END octet: ' + payloadBuffer[frameSize])
+  if (frameTypeId === SPEC.FRAME_METHOD) {
+    const payload = decodeMethodPayload(payloadBuffer, 0)
+    return {
+      type: 'method',
+      channelId: channelId,
+      className: payload.className,
+      methodName: payload.methodName,
+      fullName: (payload.className + '.' + payload.methodName) as any,
+      params: payload.params
     }
-  } else if (type === SPEC.FRAME_HEADER) {
+  } else if (frameTypeId === SPEC.FRAME_HEADER) {
     const payload = decodeHeader(payloadBuffer, 0)
-    return [{
+    return {
       type: 'header',
       channelId: channelId,
       className: payload.className,
       bodySize: payload.bodySize,
       fields: payload.fields,
-    }, rest]
-  } else if (type === SPEC.FRAME_BODY) {
-    return [{type: 'body', channelId, payload: payloadBuffer}, rest]
-  } else if (type === SPEC.FRAME_HEARTBEAT) {
-    return [{type: 'heartbeat', channelId: 0}, rest]
+    }
+  } else if (frameTypeId === SPEC.FRAME_BODY) {
+    return {type: 'body', channelId, payload: payloadBuffer.slice(0, -1)}
+  } else if (frameTypeId === SPEC.FRAME_HEARTBEAT) {
+    return {type: 'heartbeat', channelId: 0}
   } else {
-    throw new Error('unknown frame type')
+    throw new AMQPConnectionError('FRAME_ERROR', 'invalid data frame')
   }
 }
 

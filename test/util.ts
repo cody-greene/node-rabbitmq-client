@@ -2,6 +2,7 @@ import EventEmitter from 'events'
 import {Socket, createServer} from 'net'
 import {DataFrame} from '../src/types'
 import {decodeFrame} from '../src/codec'
+import {createAsyncReader} from '../src/util'
 
 function expectEvent(emitter: EventEmitter, name: string): Promise<any> {
   return new Promise<void>((resolve) => { emitter.once(name, resolve) })
@@ -12,22 +13,15 @@ function sleep(ms: number) {
 }
 
 async function* produceFrames(socket: Socket) {
-  let chunk: Buffer|null
-  let frame: DataFrame
   const versionHeader = Buffer.from('AMQP\x00\x00\x09\x01')
-  let first = true
-  for await (chunk of socket) {
-    while (chunk) {
-      if (first) {
-        if (chunk.slice(0, 8).compare(versionHeader) !== 0)
-          throw new Error('expected version header')
-        chunk = chunk.byteLength > 8 ? chunk.slice(8) : null
-        first = false
-        continue
-      }
-      [frame, chunk] = decodeFrame(chunk)
-      yield frame
-    }
+  const read = createAsyncReader(socket)
+  const chunk = await read(8)
+  if (chunk.compare(versionHeader))
+    throw new Error('expected version header')
+  try {
+    while (true) yield await decodeFrame(read)
+  } catch (err) {
+    if (err.code !== 'READ_END') socket.destroy(err)
   }
 }
 

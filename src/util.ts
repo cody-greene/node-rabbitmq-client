@@ -1,3 +1,6 @@
+import {AMQPConnectionError} from './exception'
+import {Readable} from 'stream'
+import {promisify} from 'util'
 
 /** @internal */
 export interface Deferred<T=any> {
@@ -56,5 +59,42 @@ export function camelCase(string: string): string {
     return string
   return parts.reduce((acc, word, index) => {
     return acc + (index ? word.charAt(0).toUpperCase() + word.slice(1) : word)
+  })
+}
+
+type ReadCB = (err: any, buf: Buffer) => void
+
+/**
+ * Wrap Readable.read() to ensure that it either resolves with a Buffer of the
+ * requested length, waiting for more data when necessary, or is rejected.
+ * Assumes only a single pending read at a time.
+ * See also: https://nodejs.org/api/stream.html#readablereadsize
+ * @internal
+ */
+export function createAsyncReader(socket: Readable): (bytes: number) => Promise<Buffer> {
+  let bytes: number
+  let cb: ReadCB|undefined
+
+  function _read() {
+    if (!cb) return
+    const buf: Buffer|null = socket.read(bytes)
+    if (!buf && socket.readable)
+      return // wait for readable OR close
+    if (buf?.byteLength !== bytes) {
+      cb(new AMQPConnectionError('READ_END',
+        'stream ended before all bytes received'), buf!)
+    } else {
+      cb(null, buf)
+    }
+    cb = undefined
+  }
+
+  socket.on('close', _read)
+  socket.on('readable', _read)
+
+  return promisify((_bytes: number, _cb: ReadCB) => {
+    bytes = _bytes
+    cb = _cb
+    _read()
   })
 }

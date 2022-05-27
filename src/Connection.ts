@@ -2,11 +2,11 @@ import net, {Socket} from 'net'
 import tls from 'tls'
 import EventEmitter from 'events'
 import {AMQPConnectionError, AMQPChannelError, AMQPError} from './exception'
-import {expBackoff, createDeferred, Deferred} from './util'
+import {createAsyncReader, expBackoff, createDeferred, Deferred} from './util'
 import * as codec from './codec'
 import Channel from './Channel'
 import normalizeOptions, {ConnectionOptions} from './normalize'
-import {READY_STATE, Envelope, MethodParams, Publisher, PublisherProps, MessageBody} from './types'
+import {READY_STATE, Envelope, MethodParams, Publisher, PublisherProps, MessageBody, DataFrame} from './types'
 import SortedMap from './SortedMap'
 import Consumer, {ConsumerProps, ConsumerHandler} from './Consumer'
 
@@ -284,7 +284,6 @@ class Connection extends EventEmitter {
       connectionError = connectionError || err
     })
     socket.on('close', () => {
-      //console.log(new Date().toISOString(), this._opt.connectionName, 'SOCKET.on("close")')
       if (this._state.readyState === READY_STATE.CLOSING) {
         this._state.readyState = READY_STATE.CLOSED
         this._reset(connectionError || new AMQPConnectionError('CLOSING', 'connection is closed'))
@@ -300,32 +299,49 @@ class Connection extends EventEmitter {
           this.emit('error', connectionError)
       }
     })
-    socket.once('data', chunk => {
-      // If the server does not support the requested protocol version then it
-      // will respond with a version that it DOES support and close the socket.
-      if (chunk.toString('utf8', 0, 4) === 'AMQP') {
-        socket.end()
-        const actual = [chunk[5], chunk[6], chunk[7]].join('-')
-        const message = `this version of AMQP is not supported; the server suggests ${actual}`
-        connectionError = new AMQPConnectionError('VERSION_MISMATCH', message)
-        return
+
+    const readerLoop = async () => {
+      try {
+        const read = createAsyncReader(socket)
+        await this._negotiate(read)
+        // consume AMQP DataFrames until the socket is closed
+        while (true) this._handleChunk(await codec.decodeFrame(read))
+      } catch (err) {
+        // TODO if err instanceof AMQPConnectionError then invoke connection.close + socket.end() + socket.resume()
+        // all bets are off when we get a codec error; just kill the socket
+        if (err.code !== 'READ_END') socket.destroy(err)
       }
-      // Otherwise we can expect regular DataFrames
-      this._handleChunk(chunk)
-      socket.on('data', this._handleChunk)
-    })
+    }
+
+    readerLoop()
     socket.write(codec.PROTOCOL_HEADER)
-    this._negotiate().catch(() => { /* already handled */ })
+
     return socket
   }
 
   /** @internal Establish connection parameters with the server. */
-  private async _negotiate(): Promise<void> {
-    /*const serverParams = */await this._state.ch0._addReplyListener('connection.start')
+  private async _negotiate(read: (bytes: number) => Promise<Buffer>): Promise<void> {
+    const readFrame = async (fullName: string) => {
+      const frame = await codec.decodeFrame(read)
+      if (frame.channelId === 0 && frame.type === 'method' && frame.fullName === fullName)
+        return frame.params
+      throw new AMQPConnectionError('COMMAND_INVALID', 'received unexpected frame during negotiation')
+    }
+
+    // check for version mismatch (only on first chunk)
+    const chunk = await read(8)
+    if (chunk.toString('utf-8', 0, 4) === 'AMQP') {
+      const version = chunk.slice(4).join('-')
+      const message = `this version of AMQP is not supported; the server suggests ${version}`
+      throw new AMQPConnectionError('VERSION_MISMATCH', message)
+    }
+    this._socket.unshift(chunk)
+
+    /*const serverParams = */await readFrame('connection.start')
     // TODO support EXTERNAL mechanism, i.e. x509 peer verification
     // https://github.com/rabbitmq/rabbitmq-auth-mechanism-ssl
     // serverParams.mechanisms === 'EXTERNAL PLAIN AMQPLAIN'
-    this._state.ch0._invokeNowait('connection.start-ok', {
+    this._writeMethod(0, 'connection.start-ok', {
       locale: 'en_US',
       mechanism: 'PLAIN',
       response: [null, this._opt.username, this._opt.password].join(String.fromCharCode(0)),
@@ -333,7 +349,7 @@ class Connection extends EventEmitter {
         ? {...CLIENT_PROPERTIES, connection_name: this._opt.connectionName}
         : CLIENT_PROPERTIES
     })
-    const params = await this._state.ch0._addReplyListener('connection.tune')
+    const params = await readFrame('connection.tune')
     const channelMax = params.channelMax > 0
       ? Math.min(this._opt.maxChannels, params.channelMax)
       : this._opt.maxChannels
@@ -341,8 +357,9 @@ class Connection extends EventEmitter {
       ? Math.min(this._opt.frameMax, params.frameMax)
       : this._opt.frameMax
     const heartbeat = determineHeartbeat(params.heartbeat, this._opt.heartbeat)
-    this._state.ch0._invokeNowait('connection.tune-ok', {channelMax, frameMax, heartbeat})
-    await this._state.ch0._invoke('connection.open', {virtualHost: this._opt.vhost})
+    this._writeMethod(0, 'connection.tune-ok', {channelMax, frameMax, heartbeat})
+    this._writeMethod(0, 'connection.open', {virtualHost: this._opt.vhost})
+    await readFrame('connection.open-ok')
 
     // create heartbeat timeout
     if (heartbeat > 0) {
@@ -364,7 +381,6 @@ class Connection extends EventEmitter {
   _writeMethod<T extends keyof MethodParams>(channelId: number, fullName: T, params: MethodParams[T]): void {
     const [className, methodName] = fullName.split('.')
     const frame = codec.encodeFrame({type: 'method', channelId, className, methodName, fullName, params})
-    //console.log(new Date().toISOString(), this._opt.connectionName, '>>', fullName)
     this._socket.write(frame)
   }
 
@@ -404,14 +420,13 @@ class Connection extends EventEmitter {
   }
 
   /** @internal */
-  private _handleChunk(chunk: Buffer): void {
-    const [evt, rest] = codec.decodeFrame(chunk)
+  private _handleChunk(evt: DataFrame): void {
     let ch: Channel|undefined
     if (evt) {
       if (evt.type === 'heartbeat') {
+        // TODO if connection.blocked then heartbeat monitoring is disabled; don't respond
         this._socket.write(codec.HEARTBEAT_FRAME)
       } else if (evt.type === 'method') {
-        //console.log(new Date().toISOString(), this._opt.connectionName, '<<', evt.fullName)
         switch (evt.fullName) {
           case 'connection.close':
             this._state.ch0._invokeNowait('connection.close-ok', undefined)
@@ -463,9 +478,6 @@ class Connection extends EventEmitter {
         ch._onBody(evt)
       }
     }
-    // might be more than 1 frame in a chunk!
-    if (rest != null)
-      this._handleChunk(rest)
   }
 
   /** @internal */
