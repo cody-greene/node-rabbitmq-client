@@ -187,25 +187,39 @@ class Channel extends EventEmitter {
       this._callReplyListener('basic.get-ok', undefined)
     } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.fullName === 'basic.ack') {
       const params: Required<MethodParams['basic.ack']> = methodFrame.params as any
-      const dfd = this._state.unconfirmed.get(params.deliveryTag)
-      if (dfd) {
-        dfd.resolve()
-        this._state.unconfirmed.delete(params.deliveryTag)
+      if (params.multiple) {
+        for (const [tag, dfd] of this._state.unconfirmed.entries()) {
+          if (tag > params.deliveryTag)
+            break
+          dfd.resolve()
+          this._state.unconfirmed.delete(tag)
+        }
       } else {
-        //TODO channel error; unexpected ack
+        const dfd = this._state.unconfirmed.get(params.deliveryTag)
+        if (dfd) {
+          dfd.resolve()
+          this._state.unconfirmed.delete(params.deliveryTag)
+        } else {
+          //TODO channel error; PRECONDITION_FAILED, unexpected ack
+        }
       }
     } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.fullName === 'basic.nack') {
       const params: Required<MethodParams['basic.nack']> = methodFrame.params as any
-      const dfd = this._state.unconfirmed.get(params.deliveryTag)
-      if (dfd) {
-        dfd.reject(new AMQPError('NACK', 'message rejected by server'))
-        this._state.unconfirmed.delete(params.deliveryTag)
+      if (params.multiple) {
+        for (const [tag, dfd] of this._state.unconfirmed.entries()) {
+          if (tag > params.deliveryTag)
+            break
+          dfd.reject(new AMQPError('NACK', 'message rejected by server'))
+          this._state.unconfirmed.delete(tag)
+        }
       } else {
-        //TODO channel error; unexpected nack
-        //A message MUST not be rejected more than once. The receiving peer
-        //MUST validate that a non-zero delivery-tag refers to an
-        //unacknowledged, delivered message, and raise a channel exception if
-        //this is not the case. Error code: precondition-failed
+        const dfd = this._state.unconfirmed.get(params.deliveryTag)
+        if (dfd) {
+          dfd.reject(new AMQPError('NACK', 'message rejected by server'))
+          this._state.unconfirmed.delete(params.deliveryTag)
+        } else {
+          //TODO channel error; PRECONDITION_FAILED, unexpected nack
+        }
       }
     } else if (methodFrame.fullName === 'basic.cancel') {
       const params: Required<MethodParams['basic.cancel']> = methodFrame.params as any
@@ -213,8 +227,7 @@ class Channel extends EventEmitter {
       setImmediate(() => {
         this.emit('basic.cancel', params.consumerTag, new AMQPError('CANCEL_FORCED', 'cancelled by server'))
       })
-    } else if (methodFrame.fullName === 'channel.flow') {
-      // TODO pause outgoing content frames
+    //} else if (methodFrame.fullName === 'channel.flow') unsupported; https://blog.rabbitmq.com/posts/2014/04/breaking-things-with-rabbitmq-3-3
     } else {
       this._callReplyListener(methodFrame.fullName, methodFrame.params)
     }
