@@ -1,4 +1,4 @@
-import type {ConnectionOptions as TLSOptions} from 'tls'
+import type {ConnectionOptions as TLSOptions} from 'node:tls'
 
 const DEFAULT_CONNECTION = 'amqp://guest:guest@localhost:5672'
 const TLS_PORT = '5671'

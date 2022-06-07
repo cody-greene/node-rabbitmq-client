@@ -1,6 +1,6 @@
 import {AMQPConnectionError} from './exception'
-import {Readable, Writable} from 'stream'
-import {promisify} from 'util'
+import {Readable, Writable} from 'node:stream'
+import {promisify} from 'node:util'
 
 /** @internal */
 export interface Deferred<T=any> {

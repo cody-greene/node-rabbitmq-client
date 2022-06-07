@@ -1,4 +1,4 @@
-import EventEmitter from 'events'
+import EventEmitter from 'node:events'
 
 /** @internal */
 export enum READY_STATE {CONNECTING, OPEN, CLOSING, CLOSED}

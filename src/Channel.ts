@@ -3,7 +3,7 @@ import {AMQPError, AMQPChannelError, AMQPConnectionError} from './exception'
 import {createDeferred, Deferred, EncoderStream} from './util'
 import type {AsyncMessage, BodyFrame, Envelope, HeaderFrame, MessageBody, MethodFrame, MethodParams, ReturnedMessage, SyncMessage, SyncMethods} from './types'
 import type Connection from './Connection'
-import EventEmitter from 'events'
+import EventEmitter from 'node:events'
 import {genContentFrames, genMethodFrame} from './codec'
 import SPEC from './spec'
 

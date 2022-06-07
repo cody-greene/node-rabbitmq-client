@@ -1,7 +1,7 @@
 import test from 'tape'
 import {expectEvent, sleep} from './util'
 import {createAsyncReader, EncoderStream} from '../src/util'
-import {Readable, Writable} from 'stream'
+import {Readable, Writable} from 'node:stream'
 
 /** Create a Readable stream with configurable speed */
 function stubReadable(data: Buffer, chunkSize: number, delay=1): Readable {

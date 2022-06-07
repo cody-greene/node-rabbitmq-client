@@ -1,4 +1,4 @@
-import EventEmitter from 'events'
+import EventEmitter from 'node:events'
 import {READY_STATE, AsyncMessage, MethodParams} from './types'
 import type Channel from './Channel'
 import type Connection from './Connection'

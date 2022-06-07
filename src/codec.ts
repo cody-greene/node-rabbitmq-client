@@ -1,8 +1,7 @@
 /*
  * This module encodes to, and decodes from, the AMQP binary protocol
  */
-import assert from 'assert'
-import {Writable} from 'stream'
+import assert from 'node:assert'
 import {AMQPConnectionError} from './exception'
 import SPEC from './spec'
 import type {HeaderFrame, MethodFrame, DataFrame, Decimal, MethodParams, Envelope} from './types'

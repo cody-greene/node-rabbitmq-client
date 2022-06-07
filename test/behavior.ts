@@ -1,10 +1,9 @@
 import test from 'tape'
 import Connection, {AsyncMessage} from '../src'
-import {createServer} from 'net'
+import {createServer} from 'node:net'
 import {createDeferred, Deferred} from '../src/util'
 import {MethodFrame} from '../src/types'
 import {useFakeServer, expectEvent, sleep} from './util'
-import {randomBytes} from 'crypto'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 

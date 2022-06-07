@@ -1,5 +1,5 @@
-import EventEmitter from 'events'
-import {Socket, createServer} from 'net'
+import EventEmitter from 'node:events'
+import {Socket, createServer} from 'node:net'
 import {DataFrame} from '../src/types'
 import {decodeFrame} from '../src/codec'
 import {createAsyncReader} from '../src/util'
