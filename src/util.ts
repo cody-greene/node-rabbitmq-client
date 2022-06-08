@@ -131,10 +131,16 @@ export class EncoderStream<T=unknown> extends Writable {
     // @ts-ignore Added in node v15.2.0, v14.17.0
     let ok = !this._out.writableNeedDrain
     try {
+      // if Nagle's algorithm is enabled, this will reduce latency
+      this._out.cork()
       while (ok && (res = it.next()) && !res.done)
         ok = this._out.write(res.value)
     } catch (err) {
       return cb(err)
+    } finally {
+      this._out.uncork()
+      // TODO consider this:
+      //process.nextTick(() => this._out.uncork())
     }
     if (res?.done) {
       this._cur = undefined
