@@ -261,15 +261,19 @@ class Connection extends EventEmitter {
       socket = tls.connect({
         port: host.port,
         host: host.hostname,
+        ...this._opt.socket,
         ...this._opt.tls
       })
     } else {
       socket = net.connect({
         port: host.port,
-        host: host.hostname
+        host: host.hostname,
+        ...this._opt.socket
       })
     }
     this._socket = socket
+
+    socket.setNoDelay(!!this._opt.noDelay)
 
     let connectionError: Error|undefined
 

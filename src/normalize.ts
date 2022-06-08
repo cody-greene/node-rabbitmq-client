@@ -1,3 +1,4 @@
+import {TcpSocketConnectOpts} from 'node:net'
 import type {ConnectionOptions as TLSOptions} from 'node:tls'
 
 const DEFAULT_CONNECTION = 'amqp://guest:guest@localhost:5672'
@@ -55,6 +56,12 @@ export interface ConnectionOptions {
    * "amqps:" */
   tls?: boolean|TLSOptions,
 
+  /** Additional options when creating the TCP socket with net.connect(). */
+  socket?: TcpSocketConnectOpts,
+
+  /** Disable {@link https://en.wikipedia.org/wiki/Nagle's_algorithm | Nagle's algorithm} for reduced latency */
+  noDelay?: boolean,
+
   /** "hostname:port" of multiple nodes in a cluster */
   hosts?: string[],
 }
@@ -72,6 +79,8 @@ type ValidatedKeys =
   | 'username'
   | 'vhost'
 interface ValidatedOptions extends Pick<Required<ConnectionOptions>, ValidatedKeys> {
+  noDelay?: boolean,
+  socket?: TcpSocketConnectOpts,
   tls?: TLSOptions,
   hosts: Array<{hostname: string, port: number}>
 }
