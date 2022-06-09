@@ -1,4 +1,3 @@
-import Dequeue from './Dequeue'
 import {AMQPError, AMQPChannelError, AMQPConnectionError} from './exception'
 import {createDeferred, Deferred, EncoderStream} from './util'
 import type {AsyncMessage, BodyFrame, Envelope, HeaderFrame, MessageBody, MethodFrame, MethodParams, ReturnedMessage, SyncMessage, SyncMethods} from './types'
@@ -72,7 +71,7 @@ class Channel extends EventEmitter {
   private _state: {
     unconfirmed: Map<number, Deferred<void>>
     mode: CH_MODE
-    callbacks: Map<string, DeferredParams|Dequeue<DeferredParams>>
+    callbacks: Array<[string, DeferredParams]>
     maxFrameSize: number
     /** For tracking consumers created with basic.consume */
     consumers: Map<string, ConsumerCallback>
@@ -93,7 +92,7 @@ class Channel extends EventEmitter {
     this.id = id
     this.active = true
     this._state = {
-      callbacks: new Map(),
+      callbacks: [],
       maxFrameSize: conn._opt.frameMax,
       deliveryCount: 1,
       mode: CH_MODE.NORMAL,
@@ -140,39 +139,22 @@ class Channel extends EventEmitter {
    * Save a handler (run-once) for an AMQP synchronous method response
    * @internal
    */
-  _addCallback<T extends keyof MethodParams>(classMethod: T): Promise<Required<MethodParams[T]>> {
+  _addCallback<T extends keyof MethodParams>(fullName: T): Promise<Required<MethodParams[T]>> {
     const dfd = createDeferred()
-    let dequeOrDfd = this._state.callbacks.get(classMethod)
-    if (dequeOrDfd == null) {
-      this._state.callbacks.set(classMethod, dfd)
-    } else if (dequeOrDfd instanceof Dequeue) {
-      dequeOrDfd.pushRight(dfd)
-    } else {
-      this._state.callbacks.set(classMethod, new Dequeue([dequeOrDfd, dfd]))
-    }
+    this._state.callbacks.push([fullName, dfd])
     return dfd.promise
   }
 
   /** @internal */
-  _resolveCallback<T extends keyof MethodParams>(classMethod: T, params: MethodParams[T]) {
-    const dequeOrDfd = this._state.callbacks.get(classMethod)
-    if (dequeOrDfd == null) {
+  _resolveCallback<T extends keyof MethodParams>(fullName: T, params: MethodParams[T]) {
+    const pair = this._state.callbacks[0]
+    if (!pair || pair[0] !== fullName) {
       // this is a bug; should never happen
-      //console.error(`unexpected incoming method ${this.id}:${classMethod}`, params)
-    } else if (dequeOrDfd instanceof Dequeue) {
-      const dfd = dequeOrDfd.popLeft()
-      if (dfd) {
-        dfd.resolve(params)
-      } else {
-        // this is a bug; should never happen
-        //console.error(`unexpected incoming method ${this.id}:${classMethod}`, params)
-      }
-      if (dequeOrDfd.size < 1) {
-        this._state.callbacks.delete(classMethod)
-      }
+      throw new AMQPConnectionError('UNEXPECTED_FRAME',
+        `client received unexpected method ch${this.id}:${fullName} ${JSON.stringify(params)}`)
     } else {
-      this._state.callbacks.delete(classMethod)
-      dequeOrDfd.resolve(params)
+      this._state.callbacks.shift()
+      pair[1].resolve(params)
     }
   }
 
@@ -190,21 +172,12 @@ class Channel extends EventEmitter {
         key = key + '-ok'
       }
     }
-    const collection = this._state.callbacks
-    const dequeOrDfd = collection.get(key)
-    if (dequeOrDfd == null) {
+    const pair = this._state.callbacks[0]
+    if (!pair || pair[0] !== key) {
       this._conn.emit('error', err)
-    } else if (dequeOrDfd instanceof Dequeue) {
-      const dfd = dequeOrDfd.popLeft()
-      if (dfd == null)
-        this._conn.emit('error', err)
-      else
-        dfd.reject(err)
-      if (dequeOrDfd.size < 1)
-        collection.delete(key)
     } else {
-      collection.delete(key)
-      dequeOrDfd.reject(err)
+      this._state.callbacks.shift()
+      pair[1].reject(err)
     }
   }
 
@@ -216,19 +189,13 @@ class Channel extends EventEmitter {
     if (err == null)
       err = new AMQPChannelError('CH_CLOSE', 'channel is closed')
     this.active = false
-    for (const dequeOrDfd of this._state.callbacks.values()) {
-      if (dequeOrDfd instanceof Dequeue) {
-        for (const dfd of dequeOrDfd.valuesLeft()) {
-          dfd.reject(err)
-        }
-      } else {
-        dequeOrDfd.reject(err)
-      }
+    for (const [, dfd] of this._state.callbacks) {
+      dfd.reject(err)
     }
     for (const dfd of this._state.unconfirmed.values()) {
       dfd.reject(err)
     }
-    this._state.callbacks.clear()
+    this._state.callbacks = []
     this._state.consumers.clear()
     this._state.unconfirmed.clear()
     this._state.stream.destroy(err)
