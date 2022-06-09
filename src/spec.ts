@@ -9,14 +9,6 @@ interface AMQPMethod {
   }>
 }
 
-interface AMQPClass {
-  readonly id: number,
-  readonly name: string,
-  readonly methodById: Map<number, AMQPMethod>,
-  readonly methodByName: Map<string, AMQPMethod>,
-  readonly methods: ReadonlyArray<AMQPMethod>
-}
-
 const EMPTY_OBJ = Object.create(null)
 const EMPTY_ARR: never[] = []
 
@@ -51,135 +43,86 @@ const SPEC = {
     [541, 'INTERNAL_ERROR'],
   ]),
   getFullName(classId: number, methodId: number): string {
-    const classDef = this.classById.get(classId)
-    const methodDef = classDef?.methodById.get(methodId)
-    if (classDef && methodDef)
-      return classDef.name + '.' + methodDef.name
-    return ''
+    const def = this.methodById.get((classId << 16) + methodId)
+    return def ? def.name : ''
   },
-  classById: new Map<number, AMQPClass>(),
-  classByName: new Map<string, AMQPClass>(),
-  classes: [{
-    id: 10,
-    name: 'connection',
-    methodByName: new Map<string, AMQPMethod>(),
-    methodById: new Map<number, AMQPMethod>(),
-    methods: [
-      {id: 10, name: 'start', synchronous: true, params: [{name: 'versionMajor', type: 'octet', defaultValue: 0}, {name: 'versionMinor', type: 'octet', defaultValue: 9}, {name: 'serverProperties', type: 'table'}, {name: 'mechanisms', type: 'longstr', defaultValue: 'PLAIN'}, {name: 'locales', type: 'longstr', defaultValue: 'en_US'}]},
-      {id: 11, name: 'start-ok', synchronous: false, params: [{name: 'clientProperties', type: 'table'}, {name: 'mechanism', type: 'shortstr', defaultValue: 'PLAIN'}, {name: 'response', type: 'longstr'}, {name: 'locale', type: 'shortstr', defaultValue: 'en_US'}]},
-      {id: 20, name: 'secure', synchronous: true, params: [{name: 'challenge', type: 'longstr'}]},
-      {id: 21, name: 'secure-ok', synchronous: false, params: [{name: 'response', type: 'longstr'}]},
-      {id: 30, name: 'tune', synchronous: true, params: [{name: 'channelMax', type: 'short', defaultValue: 0}, {name: 'frameMax', type: 'long', defaultValue: 0}, {name: 'heartbeat', type: 'short', defaultValue: 0}]},
-      {id: 31, name: 'tune-ok', synchronous: false, params: [{name: 'channelMax', type: 'short', defaultValue: 0}, {name: 'frameMax', type: 'long', defaultValue: 0}, {name: 'heartbeat', type: 'short', defaultValue: 0}]},
-      {id: 40, name: 'open', synchronous: true, params: [{name: 'virtualHost', type: 'shortstr', defaultValue: '/'}, {name: 'capabilities', type: 'shortstr', defaultValue: ''}, {name: 'insist', type: 'bit', defaultValue: false}]},
-      {id: 41, name: 'open-ok', synchronous: false, params: [{name: 'knownHosts', type: 'shortstr', defaultValue: ''}]},
-      {id: 50, name: 'close', synchronous: true, params: [{name: 'replyCode', type: 'short'}, {name: 'replyText', type: 'shortstr', defaultValue: ''}, {name: 'classId', type: 'short'}, {name: 'methodId', type: 'short'}]},
-      {id: 51, name: 'close-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 60, name: 'blocked', synchronous: false, params: [{name: 'reason', type: 'shortstr', defaultValue: ''}]},
-      {id: 61, name: 'unblocked', synchronous: false, params: EMPTY_ARR},
-    ]
-  }, {
-    id: 20,
-    name: 'channel',
-    methodByName: new Map<string, AMQPMethod>(),
-    methodById: new Map<number, AMQPMethod>(),
-    methods: [
-      {id: 10, name: 'open', synchronous: true, params: [{name: 'outOfBand', type: 'shortstr', defaultValue: ''}]},
-      {id: 11, name: 'open-ok', synchronous: false, params: [{name: 'channelId', type: 'longstr', defaultValue: ''}]},
-      {id: 20, name: 'flow', synchronous: true, params: [{name: 'active', type: 'bit'}]},
-      {id: 21, name: 'flow-ok', synchronous: false, params: [{name: 'active', type: 'bit'}]},
-      {id: 40, name: 'close', synchronous: true, params: [{name: 'replyCode', type: 'short'}, {name: 'replyText', type: 'shortstr', defaultValue: ''}, {name: 'classId', type: 'short'}, {name: 'methodId', type: 'short'}]},
-      {id: 41, name: 'close-ok', synchronous: false, params: EMPTY_ARR}
-    ]
-  }, {
-    id: 30,
-    name: 'access',
-    methodByName: new Map<string, AMQPMethod>(),
-    methodById: new Map<number, AMQPMethod>(),
-    methods: [
-      {id: 10, name: 'request', synchronous: true, params: [{name: 'realm', type: 'shortstr', defaultValue: '/data'}, {name: 'exclusive', type: 'bit', defaultValue: false}, {name: 'passive', type: 'bit', defaultValue: true}, {name: 'active', type: 'bit', defaultValue: true}, {name: 'write', type: 'bit', defaultValue: true}, {name: 'read', type: 'bit', defaultValue: true}]},
-      {id: 11, name: 'request-ok', synchronous: false, params: [{name: 'ticket', type: 'short', defaultValue: 1}]},
-    ]
-  }, {
-    id: 40,
-    name: 'exchange',
-    methodByName: new Map<string, AMQPMethod>(),
-    methodById: new Map<number, AMQPMethod>(),
-    methods: [
-      {id: 10, name: 'declare', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'exchange', type: 'shortstr'}, {name: 'type', type: 'shortstr', defaultValue: 'direct'}, {name: 'passive', type: 'bit', defaultValue: false}, {name: 'durable', type: 'bit', defaultValue: false}, {name: 'autoDelete', type: 'bit', defaultValue: false}, {name: 'internal', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
-      {id: 11, name: 'declare-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 20, name: 'delete', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'exchange', type: 'shortstr'}, {name: 'ifUnused', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}]},
-      {id: 21, name: 'delete-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 30, name: 'bind', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'destination', type: 'shortstr'}, {name: 'source', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
-      {id: 31, name: 'bind-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 40, name: 'unbind', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'destination', type: 'shortstr'}, {name: 'source', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
-      {id: 51, name: 'unbind-ok', synchronous: false, params: EMPTY_ARR},
-    ]
-  }, {
-    id: 50,
-    name: 'queue',
-    methodByName: new Map<string, AMQPMethod>(),
-    methodById: new Map<number, AMQPMethod>(),
-    methods: [
-      {id: 10, name: 'declare', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'passive', type: 'bit', defaultValue: false}, {name: 'durable', type: 'bit', defaultValue: false}, {name: 'exclusive', type: 'bit', defaultValue: false}, {name: 'autoDelete', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
-      {id: 11, name: 'declare-ok', synchronous: false, params: [{name: 'queue', type: 'shortstr'}, {name: 'messageCount', type: 'long'}, {name: 'consumerCount', type: 'long'}]},
-      {id: 20, name: 'bind', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
-      {id: 21, name: 'bind-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 30, name: 'purge', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'nowait', type: 'bit', defaultValue: false}]},
-      {id: 31, name: 'purge-ok', synchronous: false, params: [{name: 'messageCount', type: 'long'}]},
-      {id: 40, name: 'delete', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'ifUnused', type: 'bit', defaultValue: false}, {name: 'ifEmpty', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}]},
-      {id: 41, name: 'delete-ok', synchronous: false, params: [{name: 'messageCount', type: 'long'}]},
-      {id: 50, name: 'unbind', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
-      {id: 51, name: 'unbind-ok', synchronous: false, params: EMPTY_ARR},
-    ]
-  }, {
-    id: 60,
-    name: 'basic',
-    methodByName: new Map<string, AMQPMethod>(),
-    methodById: new Map<number, AMQPMethod>(),
-    methods: [
-      {id: 10, name: 'qos', synchronous: true, params: [{name: 'prefetchSize', type: 'long', defaultValue: 0}, {name: 'prefetchCount', type: 'short', defaultValue: 0}, {name: 'global', type: 'bit', defaultValue: false}]},
-      {id: 11, name: 'qos-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 20, name: 'consume', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'consumerTag', type: 'shortstr', defaultValue: ''}, {name: 'noLocal', type: 'bit', defaultValue: false}, {name: 'noAck', type: 'bit', defaultValue: false}, {name: 'exclusive', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
-      {id: 21, name: 'consume-ok', synchronous: false, params: [{name: 'consumerTag', type: 'shortstr'}]},
-      {id: 30, name: 'cancel', synchronous: true, params: [{name: 'consumerTag', type: 'shortstr'}, {name: 'nowait', type: 'bit', defaultValue: false}]},
-      {id: 31, name: 'cancel-ok', synchronous: false, params: [{name: 'consumerTag', type: 'shortstr'}]},
-      {id: 40, name: 'publish', synchronous: false, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'exchange', type: 'shortstr', defaultValue: ''}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'mandatory', type: 'bit', defaultValue: false}, {name: 'immediate', type: 'bit', defaultValue: false}]},
-      {id: 50, name: 'return', synchronous: false, params: [{name: 'replyCode', type: 'short'}, {name: 'replyText', type: 'shortstr', defaultValue: ''}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr'}]},
-      {id: 60, name: 'deliver', synchronous: false, params: [{name: 'consumerTag', type: 'shortstr'}, {name: 'deliveryTag', type: 'longlong'}, {name: 'redelivered', type: 'bit', defaultValue: false}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr'}]},
-      {id: 70, name: 'get', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'noAck', type: 'bit', defaultValue: false}]},
-      {id: 71, name: 'get-ok', synchronous: false, params: [{name: 'deliveryTag', type: 'longlong'}, {name: 'redelivered', type: 'bit', defaultValue: false}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr'}, {name: 'messageCount', type: 'long'}]},
-      {id: 72, name: 'get-empty', synchronous: false, params: [{name: 'clusterId', type: 'shortstr', defaultValue: ''}]},
-      {id: 80, name: 'ack', synchronous: false, params: [{name: 'deliveryTag', type: 'longlong', defaultValue: 0}, {name: 'multiple', type: 'bit', defaultValue: false}]},
-      {id: 90, name: 'reject', synchronous: false, params: [{name: 'deliveryTag', type: 'longlong'}, {name: 'requeue', type: 'bit', defaultValue: true}]},
-      {id: 100, name: 'recover-async', synchronous: false, params: [{name: 'requeue', type: 'bit', defaultValue: false}]},
-      {id: 110, name: 'recover', synchronous: true, params: [{name: 'requeue', type: 'bit', defaultValue: false}]},
-      {id: 111, name: 'recover-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 120, name: 'nack', synchronous: false, params: [{name: 'deliveryTag', type: 'longlong', defaultValue: 0}, {name: 'multiple', type: 'bit', defaultValue: false}, {name: 'requeue', type: 'bit', defaultValue: true}]},
-    ]
-  }, {
-    id: 85,
-    name: 'confirm',
-    methodByName: new Map<string, AMQPMethod>(),
-    methodById: new Map<number, AMQPMethod>(),
-    methods: [
-      {id: 10, name: 'select', synchronous: true, params: [{name: 'nowait', type: 'bit', defaultValue: false}]},
-      {id: 11, name: 'select-ok', synchronous: false, params: EMPTY_ARR},
-    ]
-  }, {
-    id: 90,
-    name: 'tx',
-    methodByName: new Map<string, AMQPMethod>(),
-    methodById: new Map<number, AMQPMethod>(),
-    methods: [
-      {id: 10, name: 'select', synchronous: true, params: EMPTY_ARR},
-      {id: 11, name: 'select-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 20, name: 'commit', synchronous: true, params: EMPTY_ARR},
-      {id: 21, name: 'commit-ok', synchronous: false, params: EMPTY_ARR},
-      {id: 30, name: 'rollback', synchronous: true, params: EMPTY_ARR},
-      {id: 31, name: 'rollback-ok', synchronous: false, params: EMPTY_ARR},
-    ]
-  }],
+  methodById: new Map<number, AMQPMethod>(),
+  methodByName: new Map<string, AMQPMethod>(),
+  // id = (classId << 16) + methodId
+  // can be read as a single uint32
+  methods: [
+    {id: 0x000a000a, name: 'connection.start', synchronous: true, params: [{name: 'versionMajor', type: 'octet', defaultValue: 0}, {name: 'versionMinor', type: 'octet', defaultValue: 9}, {name: 'serverProperties', type: 'table'}, {name: 'mechanisms', type: 'longstr', defaultValue: 'PLAIN'}, {name: 'locales', type: 'longstr', defaultValue: 'en_US'}]},
+    {id: 0x000a000b, name: 'connection.start-ok', synchronous: false, params: [{name: 'clientProperties', type: 'table'}, {name: 'mechanism', type: 'shortstr', defaultValue: 'PLAIN'}, {name: 'response', type: 'longstr'}, {name: 'locale', type: 'shortstr', defaultValue: 'en_US'}]},
+    {id: 0x000a0014, name: 'connection.secure', synchronous: true, params: [{name: 'challenge', type: 'longstr'}]},
+    {id: 0x000a0015, name: 'connection.secure-ok', synchronous: false, params: [{name: 'response', type: 'longstr'}]},
+    {id: 0x000a001e, name: 'connection.tune', synchronous: true, params: [{name: 'channelMax', type: 'short', defaultValue: 0}, {name: 'frameMax', type: 'long', defaultValue: 0}, {name: 'heartbeat', type: 'short', defaultValue: 0}]},
+    {id: 0x000a001f, name: 'connection.tune-ok', synchronous: false, params: [{name: 'channelMax', type: 'short', defaultValue: 0}, {name: 'frameMax', type: 'long', defaultValue: 0}, {name: 'heartbeat', type: 'short', defaultValue: 0}]},
+    {id: 0x000a0028, name: 'connection.open', synchronous: true, params: [{name: 'virtualHost', type: 'shortstr', defaultValue: '/'}, {name: 'capabilities', type: 'shortstr', defaultValue: ''}, {name: 'insist', type: 'bit', defaultValue: false}]},
+    {id: 0x000a0029, name: 'connection.open-ok', synchronous: false, params: [{name: 'knownHosts', type: 'shortstr', defaultValue: ''}]},
+    {id: 0x000a0032, name: 'connection.close', synchronous: true, params: [{name: 'replyCode', type: 'short'}, {name: 'replyText', type: 'shortstr', defaultValue: ''}, {name: 'classId', type: 'short'}, {name: 'methodId', type: 'short'}]},
+    {id: 0x000a0033, name: 'connection.close-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x000a003c, name: 'connection.blocked', synchronous: false, params: [{name: 'reason', type: 'shortstr', defaultValue: ''}]},
+    {id: 0x000a003d, name: 'connection.unblocked', synchronous: false, params: EMPTY_ARR},
+
+    {id: 0x0014000a, name: 'channel.open', synchronous: true, params: [{name: 'outOfBand', type: 'shortstr', defaultValue: ''}]},
+    {id: 0x0014000b, name: 'channel.open-ok', synchronous: false, params: [{name: 'channelId', type: 'longstr', defaultValue: ''}]},
+    {id: 0x00140014, name: 'channel.flow', synchronous: true, params: [{name: 'active', type: 'bit'}]},
+    {id: 0x00140015, name: 'channel.flow-ok', synchronous: false, params: [{name: 'active', type: 'bit'}]},
+    {id: 0x00140028, name: 'channel.close', synchronous: true, params: [{name: 'replyCode', type: 'short'}, {name: 'replyText', type: 'shortstr', defaultValue: ''}, {name: 'classId', type: 'short'}, {name: 'methodId', type: 'short'}]},
+    {id: 0x00140029, name: 'channel.close-ok', synchronous: false, params: EMPTY_ARR},
+
+    {id: 0x001e000a, name: 'access.request', synchronous: true, params: [{name: 'realm', type: 'shortstr', defaultValue: '/data'}, {name: 'exclusive', type: 'bit', defaultValue: false}, {name: 'passive', type: 'bit', defaultValue: true}, {name: 'active', type: 'bit', defaultValue: true}, {name: 'write', type: 'bit', defaultValue: true}, {name: 'read', type: 'bit', defaultValue: true}]},
+    {id: 0x001e000b, name: 'access.request-ok', synchronous: false, params: [{name: 'ticket', type: 'short', defaultValue: 1}]},
+
+    {id: 0x0028000a, name: 'exchange.declare', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'exchange', type: 'shortstr'}, {name: 'type', type: 'shortstr', defaultValue: 'direct'}, {name: 'passive', type: 'bit', defaultValue: false}, {name: 'durable', type: 'bit', defaultValue: false}, {name: 'autoDelete', type: 'bit', defaultValue: false}, {name: 'internal', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
+    {id: 0x0028000b, name: 'exchange.declare-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x00280014, name: 'exchange.delete', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'exchange', type: 'shortstr'}, {name: 'ifUnused', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}]},
+    {id: 0x00280015, name: 'exchange.delete-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x0028001e, name: 'exchange.bind', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'destination', type: 'shortstr'}, {name: 'source', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
+    {id: 0x0028001f, name: 'exchange.bind-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x00280028, name: 'exchange.unbind', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'destination', type: 'shortstr'}, {name: 'source', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
+    {id: 0x00280033, name: 'exchange.unbind-ok', synchronous: false, params: EMPTY_ARR},
+
+    {id: 0x0032000a, name: 'queue.declare', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'passive', type: 'bit', defaultValue: false}, {name: 'durable', type: 'bit', defaultValue: false}, {name: 'exclusive', type: 'bit', defaultValue: false}, {name: 'autoDelete', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
+    {id: 0x0032000b, name: 'queue.declare-ok', synchronous: false, params: [{name: 'queue', type: 'shortstr'}, {name: 'messageCount', type: 'long'}, {name: 'consumerCount', type: 'long'}]},
+    {id: 0x00320014, name: 'queue.bind', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
+    {id: 0x00320015, name: 'queue.bind-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x0032001e, name: 'queue.purge', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'nowait', type: 'bit', defaultValue: false}]},
+    {id: 0x0032001f, name: 'queue.purge-ok', synchronous: false, params: [{name: 'messageCount', type: 'long'}]},
+    {id: 0x00320028, name: 'queue.delete', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'ifUnused', type: 'bit', defaultValue: false}, {name: 'ifEmpty', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}]},
+    {id: 0x00320029, name: 'queue.delete-ok', synchronous: false, params: [{name: 'messageCount', type: 'long'}]},
+    {id: 0x00320032, name: 'queue.unbind', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
+    {id: 0x00320033, name: 'queue.unbind-ok', synchronous: false, params: EMPTY_ARR},
+
+    {id: 0x003c000a, name: 'basic.qos', synchronous: true, params: [{name: 'prefetchSize', type: 'long', defaultValue: 0}, {name: 'prefetchCount', type: 'short', defaultValue: 0}, {name: 'global', type: 'bit', defaultValue: false}]},
+    {id: 0x003c000b, name: 'basic.qos-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x003c0014, name: 'basic.consume', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'consumerTag', type: 'shortstr', defaultValue: ''}, {name: 'noLocal', type: 'bit', defaultValue: false}, {name: 'noAck', type: 'bit', defaultValue: false}, {name: 'exclusive', type: 'bit', defaultValue: false}, {name: 'nowait', type: 'bit', defaultValue: false}, {name: 'arguments', type: 'table', defaultValue: EMPTY_OBJ}]},
+    {id: 0x003c0015, name: 'basic.consume-ok', synchronous: false, params: [{name: 'consumerTag', type: 'shortstr'}]},
+    {id: 0x003c001e, name: 'basic.cancel', synchronous: true, params: [{name: 'consumerTag', type: 'shortstr'}, {name: 'nowait', type: 'bit', defaultValue: false}]},
+    {id: 0x003c001f, name: 'basic.cancel-ok', synchronous: false, params: [{name: 'consumerTag', type: 'shortstr'}]},
+    {id: 0x003c0028, name: 'basic.publish', synchronous: false, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'exchange', type: 'shortstr', defaultValue: ''}, {name: 'routingKey', type: 'shortstr', defaultValue: ''}, {name: 'mandatory', type: 'bit', defaultValue: false}, {name: 'immediate', type: 'bit', defaultValue: false}]},
+    {id: 0x003c0032, name: 'basic.return', synchronous: false, params: [{name: 'replyCode', type: 'short'}, {name: 'replyText', type: 'shortstr', defaultValue: ''}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr'}]},
+    {id: 0x003c003c, name: 'basic.deliver', synchronous: false, params: [{name: 'consumerTag', type: 'shortstr'}, {name: 'deliveryTag', type: 'longlong'}, {name: 'redelivered', type: 'bit', defaultValue: false}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr'}]},
+    {id: 0x003c0046, name: 'basic.get', synchronous: true, params: [{name: 'ticket', type: 'short', defaultValue: 0}, {name: 'queue', type: 'shortstr', defaultValue: ''}, {name: 'noAck', type: 'bit', defaultValue: false}]},
+    {id: 0x003c0047, name: 'basic.get-ok', synchronous: false, params: [{name: 'deliveryTag', type: 'longlong'}, {name: 'redelivered', type: 'bit', defaultValue: false}, {name: 'exchange', type: 'shortstr'}, {name: 'routingKey', type: 'shortstr'}, {name: 'messageCount', type: 'long'}]},
+    {id: 0x003c0048, name: 'basic.get-empty', synchronous: false, params: [{name: 'clusterId', type: 'shortstr', defaultValue: ''}]},
+    {id: 0x003c0050, name: 'basic.ack', synchronous: false, params: [{name: 'deliveryTag', type: 'longlong', defaultValue: 0}, {name: 'multiple', type: 'bit', defaultValue: false}]},
+    {id: 0x003c005a, name: 'basic.reject', synchronous: false, params: [{name: 'deliveryTag', type: 'longlong'}, {name: 'requeue', type: 'bit', defaultValue: true}]},
+    {id: 0x003c0064, name: 'basic.recover-async', synchronous: false, params: [{name: 'requeue', type: 'bit', defaultValue: false}]},
+    {id: 0x003c006e, name: 'basic.recover', synchronous: true, params: [{name: 'requeue', type: 'bit', defaultValue: false}]},
+    {id: 0x003c006f, name: 'basic.recover-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x003c0078, name: 'basic.nack', synchronous: false, params: [{name: 'deliveryTag', type: 'longlong', defaultValue: 0}, {name: 'multiple', type: 'bit', defaultValue: false}, {name: 'requeue', type: 'bit', defaultValue: true}]},
+
+    {id: 0x0055000a, name: 'confirm.select', synchronous: true, params: [{name: 'nowait', type: 'bit', defaultValue: false}]},
+    {id: 0x0055000b, name: 'confirm.select-ok', synchronous: false, params: EMPTY_ARR},
+
+    {id: 0x005a000a, name: 'tx.select', synchronous: true, params: EMPTY_ARR},
+    {id: 0x005a000b, name: 'tx.select-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x005a0014, name: 'tx.commit', synchronous: true, params: EMPTY_ARR},
+    {id: 0x005a0015, name: 'tx.commit-ok', synchronous: false, params: EMPTY_ARR},
+    {id: 0x005a001e, name: 'tx.rollback', synchronous: true, params: EMPTY_ARR},
+    {id: 0x005a001f, name: 'tx.rollback-ok', synchronous: false, params: EMPTY_ARR},
+  ],
   headerFields: [
     {type: 'shortstr', name: 'contentType'},
     {type: 'shortstr', name: 'contentEncoding'},
@@ -198,14 +141,9 @@ const SPEC = {
   ]
 }
 
-
-for (const classDef of SPEC.classes) {
-  SPEC.classById.set(classDef.id, classDef)
-  SPEC.classByName.set(classDef.name, classDef)
-  for (const method of classDef.methods) {
-    classDef.methodById.set(method.id, method)
-    classDef.methodByName.set(method.name, method)
-  }
+for (const def of SPEC.methods) {
+  SPEC.methodById.set(def.id, def)
+  SPEC.methodByName.set(def.name, def)
 }
 
 /** @internal */

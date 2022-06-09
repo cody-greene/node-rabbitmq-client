@@ -358,7 +358,7 @@ const PARAM_TYPE: Record<string, CodecType> = {
 const HEARTBEAT_FRAME = encodeFrame({type: 'heartbeat', channelId: 0})
 
 function decodeHeader(src: Buffer, offset: number) {
-  const classId = src.readUInt16BE(offset)
+  //const classId = src.readUInt16BE(offset)
   // let weight = src.readUInt16BE(offset + 2) // not used
   // this assumes bodySize is less than Number.MAX_SAFE_INTEGER (8 petabytes)
   const bodySize = Number(src.readBigUint64BE(offset + 4))
@@ -374,16 +374,13 @@ function decodeHeader(src: Buffer, offset: number) {
       fields[item.name] = val
     }
   }
-  const classDef = SPEC.classById.get(classId)
-  assert(classDef != null, 'invalid classId: ' + classId)
-  return {className: classDef.name, bodySize, fields}
+  return {bodySize, fields}
 }
 
-function encodeHeader(out: Buffer, {className, bodySize, fields}: HeaderFrame, offset: number) {
-  const classDef = SPEC.classByName.get(className)
-  assert(classDef != null, 'invalid className: ' + className)
-  out.writeUInt16BE(classDef.id, offset)
-  out.writeUInt16BE(0, offset + 2)
+function encodeHeader(out: Buffer, {bodySize, fields}: HeaderFrame, offset: number) {
+  out.writeUint32BE(0x003c0000, offset)
+  //out.writeUInt16BE(classId, offset) always 60 for "basic"
+  //out.writeUInt16BE(0, offset + 2)
   out.writeBigUint64BE(BigInt(bodySize), offset + 4)
   let flags = 0
   let flagsOffset = offset + 12
@@ -400,13 +397,10 @@ function encodeHeader(out: Buffer, {className, bodySize, fields}: HeaderFrame, o
 }
 
 function decodeMethodPayload(src: Buffer, offset: number) {
-  const classId = src.readUInt16BE(offset)
-  const methodId = src.readUInt16BE(offset + 2)
+  const id = src.readUint32BE(offset)
   offset = offset + 4
-  const classDef = SPEC.classById.get(classId)
-  assert(classDef != null, 'invalid classId: ' + classId)
-  const methodDef = classDef.methodById.get(methodId)
-  assert(methodDef != null, 'invalid methodId: ' + classId)
+  const methodDef = SPEC.methodById.get(id)
+  assert(methodDef != null, 'invalid methodId: ' + id)
   const params: Record<string, unknown> = {}
   let bitKeys = null
   for (const {name, type} of methodDef.params) {
@@ -427,19 +421,15 @@ function decodeMethodPayload(src: Buffer, offset: number) {
     TYPE.BITS.decode(src, bitKeys, params, offset)
   }
   return {
-    className: classDef.name,
-    methodName: methodDef.name,
+    fullName: methodDef.name,
     params: methodDef.params.length ? params : undefined
   }
 }
 
-function encodeMethodPayload(out: Buffer, {className, methodName, params}: MethodFrame, offset: number) {
-  const classDef = SPEC.classByName.get(className)
-  assert(classDef != null, 'invalid className ' + className)
-  const methodDef = classDef.methodByName.get(methodName)
-  assert(methodDef != null, 'invalid methodName ' + methodName)
-  offset = out.writeUInt16BE(classDef.id, offset)
-  offset = out.writeUInt16BE(methodDef.id, offset)
+function encodeMethodPayload(out: Buffer, {fullName, params}: MethodFrame, offset: number) {
+  const methodDef = SPEC.methodByName.get(fullName)
+  assert(methodDef != null, 'invalid methodName ' + fullName)
+  offset = out.writeUint32BE(methodDef.id, offset)
   let bits = null
   if (params == null)
     params = EMPTY_OBJ
@@ -447,7 +437,7 @@ function encodeMethodPayload(out: Buffer, {className, methodName, params}: Metho
     let val = params[def.name]
     if (typeof val == 'undefined') {
       if (typeof def.defaultValue == 'undefined') {
-        throw new TypeError(`${className}.${methodName} ${def.name} (a required param) is undefined`)
+        throw new TypeError(`${methodDef.name} ${def.name} (a required param) is undefined`)
       } else {
         val = def.defaultValue
       }
@@ -484,9 +474,7 @@ async function decodeFrame(read: (bytes: number) => Promise<Buffer>): Promise<Da
     return {
       type: 'method',
       channelId: channelId,
-      className: payload.className,
-      methodName: payload.methodName,
-      fullName: (payload.className + '.' + payload.methodName) as any,
+      fullName: payload.fullName as any,
       params: payload.params
     }
   } else if (frameTypeId === SPEC.FRAME_HEADER) {
@@ -494,7 +482,6 @@ async function decodeFrame(read: (bytes: number) => Promise<Buffer>): Promise<Da
     return {
       type: 'header',
       channelId: channelId,
-      className: payload.className,
       bodySize: payload.bodySize,
       fields: payload.fields,
     }
@@ -537,8 +524,7 @@ function encodeFrame(data: DataFrame): Buffer {
 
 /** @internal */
 function* genMethodFrame<T extends keyof MethodParams>(channelId: number, fullName: T, params: MethodParams[T]): Generator<Buffer, void> {
-  const [className, methodName] = fullName.split('.')
-  yield encodeFrame({type: 'method', channelId, className, methodName, fullName, params})
+  yield encodeFrame({type: 'method', channelId, fullName, params})
 }
 
 /** @internal Allocate DataFrame buffers on demand, right before writing to the socket */
@@ -546,8 +532,6 @@ function* genContentFrames(channelId: number, params: Envelope, body: Buffer, fr
   yield encodeFrame({
     type: 'method',
     channelId,
-    className: 'basic',
-    methodName: 'publish',
     fullName: 'basic.publish',
     params
   })
@@ -556,7 +540,6 @@ function* genContentFrames(channelId: number, params: Envelope, body: Buffer, fr
   const headerFrame = encodeFrame({
     type: 'header',
     channelId,
-    className: 'basic',
     bodySize: body.length,
     fields: params
   })

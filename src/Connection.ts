@@ -385,8 +385,7 @@ class Connection extends EventEmitter {
 
   /** @internal */
   _writeMethod<T extends keyof MethodParams>(channelId: number, fullName: T, params: MethodParams[T]): void {
-    const [className, methodName] = fullName.split('.')
-    const frame = codec.encodeFrame({type: 'method', channelId, className, methodName, fullName, params})
+    const frame = codec.encodeFrame({type: 'method', channelId, fullName, params})
     this._socket.write(frame)
   }
 

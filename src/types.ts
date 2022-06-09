@@ -7,7 +7,6 @@ export enum READY_STATE {CONNECTING, OPEN, CLOSING, CLOSED}
 export interface HeaderFrame {
   type: 'header',
   channelId: number,
-  className: string,
   bodySize: number,
   fields: HeaderFields
 }
@@ -16,8 +15,6 @@ export interface HeaderFrame {
 export interface MethodFrame {
   type: 'method',
   channelId: number,
-  className: string,
-  methodName: string,
   fullName: keyof MethodParams,
   params: any
 }
