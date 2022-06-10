@@ -14,6 +14,15 @@ Why not amqplib?
 - Intuitive API with named parameters instead of positional
 - "x-arguments" like "x-message-ttl" don't have camelCase aliases
 
+## Performance
+Performance is comparable to amqplib. See ./benchmark.ts for time to publish X messages in batches of Y:
+module          | total msg | batch sz | mean    | min | max | SD     | total time
+----------------|-----------|----------|---------|-----|-----|--------|-----------
+rabbitmq-client | 10000     | 500      | 115     | 32  | 231 | 60.272 | 2289ms
+amqplib         | 10000     | 500      | 124.25  | 24  | 240 | 62.302 | 2476ms
+rabbitmq-client | 10000     | 50       | 112.255 | 8   | 391 | 82.903 | 22350ms
+amqplib         | 10000     | 50       | 142.66  | 7   | 519 | 96.098 | 28428ms
+
 ## Getting started
 ```javascript
 import Connection from 'rabbitmq-client'
