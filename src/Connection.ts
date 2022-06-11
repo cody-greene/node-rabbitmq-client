@@ -217,7 +217,6 @@ class Connection extends EventEmitter {
       }
       if (props.confirm)
         await ch.confirmSelect()
-      pendingSetup = undefined
       return ch
     }
 
@@ -227,7 +226,7 @@ class Connection extends EventEmitter {
           return Promise.reject(new AMQPChannelError('CLOSED', 'publisher is closed'))
         if (!_ch?.active) {
           if (!pendingSetup)
-            pendingSetup = setup()
+            pendingSetup = setup().finally(() =>{ pendingSetup = undefined })
           return pendingSetup.then(ch => ch.basicPublish(envelope, body))
         }
         return _ch.basicPublish(envelope, body)

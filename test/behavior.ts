@@ -618,6 +618,32 @@ test('Connection#createPublisher() concurrent publishes should trigger one setup
   await rabbit.close()
 })
 
+test('Publisher should retry failed setup', async (t) => {
+  const queue = '__not_found_7953ec8de0da686e__'
+  const rabbit = new Connection(RABBITMQ_URL)
+  const pro = rabbit.createPublisher({
+    confirm: true,
+    // setup should fail when the queue does not exist
+    queues: [{passive: true, queue}]
+  })
+
+  const [res] = await Promise.allSettled([
+    pro.publish({routingKey: queue}, 'hello')
+  ])
+
+  t.is(res.status, 'rejected', 'setup failed 1st time')
+
+  const ch = await rabbit.acquire()
+  await ch.queueDeclare({queue, exclusive: true}) // auto-delete after test
+
+  await pro.publish({routingKey: queue}, 'hello')
+  t.pass('setup completed and message published')
+
+  await pro.close()
+  await ch.close()
+  await rabbit.close()
+})
+
 // TODO opt.frameMax
 // TODO frame errors / unexpected channel
 // TODO codec
