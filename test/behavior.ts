@@ -50,7 +50,6 @@ test('can publish confirmed messages', async (t) => {
 
   const {queue} = await ch.queueDeclare({exclusive: true})
 
-  // TODO how can I test rejected messages?
   await ch.basicPublish({routingKey: queue}, 'my data')
   t.pass('published message')
 
@@ -644,7 +643,75 @@ test('Publisher should retry failed setup', async (t) => {
   await rabbit.close()
 })
 
+test('Connection should retry with next cluster node', async (t) => {
+  t.plan(11)
+
+  const [port1, server1] = await useFakeServer(async (socket, next) => {
+    server1.close()
+    let frame
+
+    // S:connection.start
+    socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.start-ok')
+
+    // S:connection.tune
+    socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.tune-ok')
+
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.open')
+    // S:connection.open-ok
+    socket.write('AQAAAAAABQAKACkAzg', 'base64')
+
+    // S:connection.close
+    socket.end('AQAAAAAAIwAKADIBQBhDT05ORUNUSU9OX0ZPUkNFRCAtIHRlc3QAAAAAzg', 'base64')
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.close-ok', 'client confirmed forced close')
+  })
+  const [port2, server2] = await useFakeServer(async (socket, next) => {
+    server2.close()
+    let frame
+
+    t.pass('connected to 2nd host')
+
+    // S:connection.start
+    socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.start-ok')
+
+    // S:connection.tune
+    socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.tune-ok')
+
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.open')
+    // S:connection.open-ok
+    socket.write('AQAAAAAABQAKACkAzg', 'base64')
+
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.close', 'client initiated close')
+    // S:connection.close-ok
+    socket.end('AQAAAAAABAAKADPO', 'base64')
+  })
+
+  const rabbit = new Connection({
+    retryLow: 25, // fast reconnect
+    hosts: [`localhost:${port1}`, `localhost:${port2}`]
+  })
+
+  await expectEvent(rabbit, 'connection')
+  t.pass('established first connection')
+  const err = await expectEvent(rabbit, 'error')
+  t.is(err.code, 'CONNECTION_FORCED', '1st conn errored')
+
+  await expectEvent(rabbit, 'connection')
+
+  await rabbit.close()
+})
+
 // TODO opt.frameMax
 // TODO frame errors / unexpected channel
 // TODO codec
-// TODO cluster failover
