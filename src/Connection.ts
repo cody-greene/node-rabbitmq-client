@@ -43,7 +43,8 @@ declare interface Connection {
   /** The connection is successfully (re)established */
   on(name: 'connection', cb: () => void): this;
   /** The rabbitmq server is low on resources. Message publishers should pause.
-   * https://www.rabbitmq.com/connection-blocked.html */
+   * The outbound side of the TCP socket is blocked until "connection.unblocked"
+   * is received.  https://www.rabbitmq.com/connection-blocked.html */
   on(name: 'connection.blocked', cb: (reason: string) => void): this;
   /** The rabbitmq server is accepting new messages. */
   on(name: 'connection.unblocked', cb: () => void): this;

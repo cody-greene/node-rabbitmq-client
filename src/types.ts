@@ -111,7 +111,7 @@ export interface Publisher extends EventEmitter {
 
 export interface Decimal {scale: number, value: number}
 
-export type MessageBody = string|Buffer|Record<string, unknown>
+export type MessageBody = string|Buffer|any
 
 export type Envelope = HeaderFields & MethodParams['basic.publish'] & {
   /** Alias for "deliveryMode". Published message should be saved to

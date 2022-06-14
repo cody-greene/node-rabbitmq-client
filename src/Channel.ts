@@ -368,6 +368,13 @@ class Channel extends EventEmitter {
    * contentType='text/plain'. If body is an object then it will be serialized
    * with contentType='application/json'. Buffer objects are unchanged.
    *
+   * If publisher-confirms are enabled, then this will resolve when the
+   * acknowledgement is received. Otherwise this will resolve after writing to
+   * the TCP socket, which is usually immediate. Note that if you keep
+   * publishing while the connection is blocked (see {@link Connection.on |
+   * Connection.on('connection.blocked')}) then the TCP socket buffer will
+   * eventually fill and this method will no longer resolve immediately.
+   *
    * @param params A queue name for direct routing, as a string, or an Envelope
    * object.
    */

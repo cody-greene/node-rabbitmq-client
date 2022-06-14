@@ -59,7 +59,11 @@ export interface ConnectionOptions {
   /** Additional options when creating the TCP socket with net.connect(). */
   socket?: TcpSocketConnectOpts,
 
-  /** Disable {@link https://en.wikipedia.org/wiki/Nagle's_algorithm | Nagle's algorithm} for reduced latency */
+  /** Disable {@link https://en.wikipedia.org/wiki/Nagle's_algorithm | Nagle's
+   * algorithm} for reduced latency. Disabling Nagle’s algorithm will enable the
+   * application to have many small packets in flight on the network at once,
+   * instead of a smaller number of large packets, which may increase load on
+   * the network, and may or may not benefit the application performance. */
   noDelay?: boolean,
 
   /** "hostname:port" of multiple nodes in a cluster */
