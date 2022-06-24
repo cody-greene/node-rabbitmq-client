@@ -156,15 +156,17 @@ class Consumer extends EventEmitter {
   /** @internal */
   private _connect() {
     this._retryTimer = undefined
-    this._pendingSetup = this._setup().catch(err => {
+    this._pendingSetup = this._setup().finally(() => {
+      this._pendingSetup = undefined
+    }).catch(err => {
       if (this._readyState === READY_STATE.CLOSING)
         return
       this._readyState = READY_STATE.CONNECTING
       err.message = 'consumer setup failed; ' + err.message
-      this._reconnect()
       // suppress spam if, for example, passive queue declaration is failing
       if (this._retryCount <= 1)
         this.emit('error', err)
+      this._reconnect()
     })
   }
 
@@ -176,7 +178,7 @@ class Consumer extends EventEmitter {
    * - connection closed (triggers channel close)
    */
   private _reconnect() {
-    if (this._conn._state.readyState >= READY_STATE.CLOSING)
+    if (this._conn._state.readyState >= READY_STATE.CLOSING || this._retryTimer || this._pendingSetup)
       return
     const {retryLow, retryHigh} = this._conn._opt
     const delay = expBackoff(retryLow, retryHigh, 0, this._retryCount++)

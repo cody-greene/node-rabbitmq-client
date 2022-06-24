@@ -712,6 +712,34 @@ test('Connection should retry with next cluster node', async (t) => {
   await rabbit.close()
 })
 
+test('Consumer does not create duplicates when setup temporarily fails', async (t) => {
+  const rabbit = new Connection({
+    url: RABBITMQ_URL,
+    retryHigh: 25
+  })
+  const queue = '__test1524e4b733696e9c__'
+  const consumer = rabbit.createConsumer({
+    queue: queue,
+    // setup will fail until queue is created
+    queueOptions: {passive: true}
+  }, () => { /* do nothing */ })
+
+  const err = await expectEvent(consumer, 'error')
+  t.is(err.code, 'NOT_FOUND', 'setup should fail at first')
+
+  const ch = await rabbit.acquire()
+  await ch.queueDeclare({queue, exclusive: true}) // auto-deleted
+  await expectEvent(consumer, 'ready')
+  t.pass('consumer setup successful')
+  consumer.once('ready', () => {
+    t.fail('expected only ONE ready event')
+  })
+
+  await ch.close()
+  await consumer.close()
+  await rabbit.close()
+})
+
 // TODO opt.frameMax
 // TODO frame errors / unexpected channel
 // TODO codec
