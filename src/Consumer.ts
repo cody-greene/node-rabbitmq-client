@@ -56,7 +56,7 @@ class Consumer extends EventEmitter {
   /** @internal */
   _readyState = READY_STATE.CONNECTING
   /** @internal */
-  _retryCount = 0
+  _retryCount = 1
   /** @internal */
   _retryTimer?: NodeJS.Timeout
   /** @internal */
@@ -162,7 +162,7 @@ class Consumer extends EventEmitter {
       this.emit('error', err)
     })
 
-    this._retryCount = 0
+    this._retryCount = 1
     // close() may have been called while setup() is running
     if (this._readyState === READY_STATE.CONNECTING)
       this._readyState = READY_STATE.OPEN
@@ -182,7 +182,7 @@ class Consumer extends EventEmitter {
       err.message = 'consumer setup failed; ' + err.message
       // suppress spam if, for example, passive queue declaration is failing
       if (this._retryCount <= 1)
-        this.emit('error', err)
+        process.nextTick(() =>{ this.emit('error', err) })
       this._reconnect()
     })
   }

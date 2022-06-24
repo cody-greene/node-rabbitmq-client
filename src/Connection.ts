@@ -88,7 +88,7 @@ class Connection extends EventEmitter {
       hostIndex: 0,
       leased: new SortedMap(),
       readyState: READY_STATE.CONNECTING,
-      retryCount: 0,
+      retryCount: 1,
       retryTimer: undefined
     }
 
@@ -286,12 +286,6 @@ class Connection extends EventEmitter {
   }
 
   /** @internal */
-  private _reconnect(): void {
-    const delay = expBackoff(this._opt.retryLow, this._opt.retryHigh, 0, this._state.retryCount++)
-    this._state.retryTimer = setTimeout(this._connect, delay)
-  }
-
-  /** @internal */
   private _connect(): Socket {
     this._state.retryTimer = undefined
 
@@ -345,9 +339,12 @@ class Connection extends EventEmitter {
           this._state.onConnect = createDeferred(true)
         this._state.readyState = READY_STATE.CONNECTING
         this._reset(connectionError)
-        this._reconnect()
+        const retryCount = this._state.retryCount++
+        const delay = expBackoff(this._opt.retryLow, this._opt.retryHigh, 0, retryCount)
+        this._state.retryTimer = setTimeout(this._connect, delay)
+        // emit & cede control to user only as final step
         // suppress spam during reconnect
-        if (this._state.retryCount <= 1)
+        if (retryCount <= 1)
           this.emit('error', connectionError)
       }
     })
@@ -419,7 +416,7 @@ class Connection extends EventEmitter {
     this._socket.setTimeout(heartbeat * 1250)
 
     this._state.readyState = READY_STATE.OPEN
-    this._state.retryCount = 0
+    this._state.retryCount = 1
     this._state.onConnect.resolve()
     if (this._state.connectionTimer)
       clearTimeout(this._state.connectionTimer)
