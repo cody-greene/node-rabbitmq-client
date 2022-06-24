@@ -712,6 +712,21 @@ test('Connection should retry with next cluster node', async (t) => {
   await rabbit.close()
 })
 
+test('should encode/decode array values in message headers', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+  const {queue} = await ch.queueDeclare({exclusive: true})
+  t.ok(queue, 'created temporary queue')
+  await ch.basicPublish({routingKey: queue, headers: {'x-test-arr': ['red', 'blue']}}, '')
+  t.pass('publish successful')
+  const msg = await ch.basicGet({queue})
+  t.ok(msg, 'recieved message')
+  const arr = msg?.headers?.['x-test-arr']
+  t.is(arr.join(), 'red,blue', 'got the array')
+  await ch.close()
+  await rabbit.close()
+})
+
 test('Consumer does not create duplicates when setup temporarily fails', async (t) => {
   const rabbit = new Connection({
     url: RABBITMQ_URL,

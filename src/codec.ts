@@ -266,17 +266,18 @@ const TYPE = {
       let index = 0
       let val
       while (index < total) {
-        [val, index] = TYPE.TABLE_VALUE.decode(src, offset)
+        [val, index] = TYPE.TABLE_VALUE.decode(data, index)
         items.push(val)
       }
       return [items, nextOffset]
     },
     encode(out: Buffer, val: Array<unknown>, offset: number) {
       const start = offset
+      offset += 4
       for (let index = 0; index < val.length; index++) {
         offset = TYPE.TABLE_VALUE.encode(out, val[index], offset)
       }
-      out.writeUInt32BE(offset - start, start)
+      out.writeUInt32BE(offset - start - 4, start)
       return offset
     }
   },
