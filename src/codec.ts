@@ -387,8 +387,10 @@ function encodeHeader(out: Buffer, {bodySize, fields}: HeaderFrame, offset: numb
   offset = offset + 14
   for (let index = 0; index < SPEC.headerFields.length; index++) {
     const field = SPEC.headerFields[index]
-    if (fields[field.name] != null) {
-      offset = PARAM_TYPE[field.type].encode(out, fields[field.name], offset)
+    // @ts-ignore
+    const val = fields[field.name]
+    if (val != null) {
+      offset = PARAM_TYPE[field.type].encode(out, val, offset)
       flags += 1 << (15 - index)
     }
   }

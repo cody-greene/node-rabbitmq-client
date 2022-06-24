@@ -38,14 +38,13 @@ export interface HeaderFields {
   contentType?: string,
   /** MIME content encoding. e.g. "gzip" */
   contentEncoding?: string,
+  /** Additional user-defined fields */
   headers?: {
-    /** https://www.rabbitmq.com/direct-reply-to.html */
-    'reply-to': string,
     /** https://www.rabbitmq.com/sender-selected.html */
-    'CC': string[],
+    'CC'?: string[],
     /** https://www.rabbitmq.com/sender-selected.html */
-    'BCC': string[],
-    [k: string]: unknown
+    'BCC'?: string[],
+    [k: string]: any
   },
   /** Non-persistent (1) or persistent (2). Use the "durable" field instead,
    * which is just a boolean-typed alias. */
@@ -54,9 +53,12 @@ export interface HeaderFields {
   priority?: number,
   /** Application correlation identifier. */
   correlationId?: string,
-  /** Address to reply to. */
+  /** https://www.rabbitmq.com/direct-reply-to.html */
   replyTo?: string,
-  /** Message expiration specification. */
+  /** Message TTL, in milliseconds. Note that only when expired messages reach
+   * the head of a queue will they actually be discarded (or dead-lettered).
+   * Setting the TTL to 0 causes messages to be expired upon reaching a queue
+   * unless they can be delivered to a consumer immediately. */
   expiration?: string,
   /** Application message identifier. */
   messageId?: string,
@@ -67,9 +69,7 @@ export interface HeaderFields {
   /** Creating user id. */
   userId?: string,
   /** Creating application id. */
-  appId?: string,
-  //clusterId?: string,
-  [k: string]: unknown
+  appId?: string
 }
 
 export interface PublisherProps {

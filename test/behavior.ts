@@ -577,21 +577,21 @@ test('Connection#createPublisher()', async (t) => {
   }
   t.is(err0?.code, 'NOT_FOUND',
     'caused a channel error')
-  await pro.publish({queue}, '')
+  await pro.publish({routingKey: queue}, '')
   t.pass('published on new channel')
 
   // should recover after connection loss
   rabbit._socket.destroy()
   await expectEvent(rabbit, 'error')
   t.pass('connection reset')
-  await pro.publish({queue}, '')
+  await pro.publish({routingKey: queue}, '')
   t.pass('published after connection error')
 
   // should not publish after close()
   await pro.close()
   let err1
   try {
-    await pro.publish({queue}, '')
+    await pro.publish({routingKey: queue}, '')
   } catch (err) {
     err1 = err
   }
