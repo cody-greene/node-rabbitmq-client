@@ -9,6 +9,7 @@ import normalizeOptions, {ConnectionOptions} from './normalize'
 import {READY_STATE, Envelope, MethodParams, Publisher, PublisherProps, MessageBody, DataFrame} from './types'
 import SortedMap from './SortedMap'
 import Consumer, {ConsumerProps, ConsumerHandler} from './Consumer'
+import RPCClient, {RPCProps} from './RPCClient'
 
 /** @internal */
 function raceWithTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promise<T> {
@@ -182,11 +183,54 @@ class Connection extends EventEmitter {
    * The handler is called for each incoming message. If it throws an error or
    * returns a rejected Promise then the message is rejected with "basic.nack"
    *
+   * The 2nd argument of `handler(msg, reply)` can be used to reply to RPC
+   * requests. e.g. `await reply('my-response-body')`. This acts like
+   * basicPublish() except the message body comes first, and the routingKey is
+   * automatically set.
+   *
    * This is an EventEmitter that may emit errors. Also, since this wraps a
    * Channel, this must be closed before closing the Connection.
+   *
+   * ```
+   * const consumer = rabbit.createConsumer({queue: 'my-queue'}, async (msg, reply) => {
+   *   console.log(msg)
+   *   // ... do some work ...
+   *   // optionally reply to an RPC-type message
+   *   await reply('my-response-data')
+   * })
+   *
+   * // when closing the application
+   * await consumer.close()
+   * ```
    */
   createConsumer(props: ConsumerProps, handler: ConsumerHandler): Consumer {
     return new Consumer(this, props, handler)
+  }
+
+  /** Set up an anonymous pseudo-queue (fast reply) consumer/publisher to
+   * perform Remote Procedure Calls (RPC). This will create a single "client"
+   * Channel on which you may publish messages, and a consumer to listen for
+   * responses. You will also need to create a "server" Channel to handle these
+   * requests and publish responses. The response message should be published
+   * with: `{routingKey: reqmsg.replyTo, correlationId: reqmsg.correlationId}`
+   *
+   * If you're using the createConsumer() helper, then you can reply to RPC
+   * requests with the 2nd argument of the message handler.
+   *
+   * Also, since this wraps a Channel, this must be closed before closing the
+   * Connection.
+   *
+   * See https://www.rabbitmq.com/direct-reply-to.html
+   *
+   * ```
+   * const client = rabbit.createRPCClient({confirm: true})
+   * const res = await client.publish({routingKey: 'my-rpc-queue'}, 'ping')
+   * console.log(res)
+   * await client.close()
+   * ```
+   * */
+  createRPCClient(props?: RPCProps): RPCClient {
+    return new RPCClient(this, props || {})
   }
 
   /**

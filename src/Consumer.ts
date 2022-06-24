@@ -1,5 +1,5 @@
 import EventEmitter from 'node:events'
-import {READY_STATE, AsyncMessage, MethodParams} from './types'
+import {READY_STATE, AsyncMessage, MethodParams, MessageBody, Envelope} from './types'
 import type Channel from './Channel'
 import type Connection from './Connection'
 import {expBackoff} from './util'
@@ -25,7 +25,11 @@ export interface ConsumerProps extends BasicConsumeParams {
   exchangeBindings?: Array<MethodParams['exchange.bind']>
 }
 
-export type ConsumerHandler = (msg: AsyncMessage) => Promise<void>
+/** Reply to an RPC-type message. Like basicPublish() but the message body
+ * comes first, and the routingKey, exchange, and correlationId are
+ * automatically set. */
+export type ReplyFN = (body: MessageBody, envelope?: Envelope) => Promise<void>
+export type ConsumerHandler = (msg: AsyncMessage, reply: ReplyFN) => Promise<void>|void
 
 declare interface Consumer {
   /** The consumer is successfully (re)created */
@@ -69,13 +73,26 @@ class Consumer extends EventEmitter {
     this._connect()
   }
 
+  private _makeReplyfn(req: AsyncMessage): ReplyFN {
+    return (body, envelope) => {
+      if (!req.replyTo)
+        throw new Error('attempted to reply to a non-RPC message')
+      return this._ch!.basicPublish({
+        ...envelope,
+        exchange: '',
+        routingKey: req.replyTo,
+        correlationId: req.correlationId
+      }, body)
+    }
+  }
+
   /** @internal */
   private async _processMessage(msg: AsyncMessage) {
     const {_ch: ch} = this
     if (!ch) return // satisfy the type checker but this should never happen
     try {
       try {
-        await this._handler(msg)
+        await this._handler(msg, this._makeReplyfn(msg))
       } catch (err) {
         if (!this._props.noAck)
           ch.basicNack({deliveryTag: msg.deliveryTag, requeue: this._props.requeue})
