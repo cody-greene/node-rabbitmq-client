@@ -176,11 +176,12 @@ const TYPE = {
       let val = src.toString('utf8', offset + 1, total)
       return [val, total]
     },
-    encode(out: Buffer, val: string, offset: number) {
+    encode(out: Buffer, val: string|number, offset: number) {
+      const str = String(val) // cast from Number
       // truncate long strings
-      let len = Math.min(Buffer.byteLength(val), 255)
+      const len = Math.min(Buffer.byteLength(str), 255)
       out.writeUInt8(len, offset)
-      out.write(val, offset + 1, len, 'utf8')
+      out.write(str, offset + 1, len, 'utf8')
       return 1 + offset + len
     }
   },
