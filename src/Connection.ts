@@ -340,7 +340,7 @@ class Connection extends EventEmitter {
         this._state.readyState = READY_STATE.CONNECTING
         this._reset(connectionError)
         const retryCount = this._state.retryCount++
-        const delay = expBackoff(this._opt.retryLow, this._opt.retryHigh, 0, retryCount)
+        const delay = expBackoff(this._opt.retryLow, this._opt.retryHigh, retryCount)
         this._state.retryTimer = setTimeout(this._connect, delay)
         // emit & cede control to user only as final step
         // suppress spam during reconnect

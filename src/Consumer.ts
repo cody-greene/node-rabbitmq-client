@@ -198,7 +198,7 @@ class Consumer extends EventEmitter {
     if (this._conn._state.readyState >= READY_STATE.CLOSING || this._retryTimer || this._pendingSetup)
       return
     const {retryLow, retryHigh} = this._conn._opt
-    const delay = expBackoff(retryLow, retryHigh, 0, this._retryCount++)
+    const delay = expBackoff(retryLow, retryHigh, this._retryCount++)
     this._retryTimer = setTimeout(this._connect, delay)
   }
 
