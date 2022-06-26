@@ -28,7 +28,35 @@ export interface RPCProps {
 
 const DEFAULT_TIMEOUT = 30e3
 
-/** See {@link Connection.createRPCClient} */
+/**
+ * See {@link Connection.createRPCClient} & {@link RPCProps}
+ *
+ * This is a single "client" Channel on which you may publish messages and
+ * listen for responses. You will also need to create a "server" Channel to
+ * handle these requests and publish responses. The response message should be
+ * published with (at minimum):
+ * ```
+ * ch.basicPublish({
+ *   routingKey: reqmsg.replyTo,
+ *   correlationId: reqmsg.correlationId
+ * }, messageBody)
+ * ```
+ *
+ * If you're using the createConsumer() helper, then you can reply to RPC
+ * requests simply by using the 2nd argument of the {@link ConsumerHandler}.
+ *
+ * Also, since this wraps a Channel, this must be closed before closing the
+ * Connection.
+ *
+ * See https://www.rabbitmq.com/direct-reply-to.html
+ *
+ * ```
+ * const client = rabbit.createRPCClient({confirm: true})
+ * const res = await client.publish({routingKey: 'my-rpc-queue'}, 'ping')
+ * console.log(res)
+ * await client.close()
+ * ```
+ * */
 class RPCClient {
   /** @internal */
   _conn: Connection

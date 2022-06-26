@@ -25,10 +25,13 @@ export interface ConsumerProps extends BasicConsumeParams {
   exchangeBindings?: Array<MethodParams['exchange.bind']>
 }
 
-/** Reply to an RPC-type message. Like basicPublish() but the message body
- * comes first, and the routingKey, exchange, and correlationId are
- * automatically set. */
 export type ReplyFN = (body: MessageBody, envelope?: Envelope) => Promise<void>
+/**
+ * @param msg The incoming message
+ * @param reply Reply to an RPC-type message. Like basicPublish() but the
+ * message body comes first, and the routingKey, exchange, and correlationId
+ * are automatically set.
+ */
 export type ConsumerHandler = (msg: AsyncMessage, reply: ReplyFN) => Promise<void>|void
 
 declare interface Consumer {
@@ -39,7 +42,37 @@ declare interface Consumer {
   on(name: 'error', cb: (err: any) => void): this;
 }
 
-/** See {@link Connection.createConsumer} */
+/**
+ * See {@link Connection.createConsumer} & {@link ConsumerProps} & {@link ConsumerHandler}
+ *
+ * This will create a dedicated Channel, declare a queue, declare exchanges,
+ * declare bindings, establish QoS, and finally start consuming messages. If
+ * the connection is reset, then all of this setup will re-run on a new
+ * Channel. This uses the same retry-delay logic as the Connection.
+ *
+ * The handler is called for each incoming message. If it throws an error or
+ * returns a rejected Promise then the message is rejected with "basic.nack"
+ *
+ * The 2nd argument of `handler(msg, reply)` can be used to reply to RPC
+ * requests. e.g. `await reply('my-response-body')`. This acts like
+ * basicPublish() except the message body comes first, and the routingKey is
+ * automatically set.
+ *
+ * This is an EventEmitter that may emit errors. Also, since this wraps a
+ * Channel, this must be closed before closing the Connection.
+ *
+ * ```
+ * const consumer = rabbit.createConsumer({queue: 'my-queue'}, async (msg, reply) => {
+ *   console.log(msg)
+ *   // ... do some work ...
+ *   // optionally reply to an RPC-type message
+ *   await reply('my-response-data')
+ * })
+ *
+ * // when closing the application
+ * await consumer.close()
+ * ```
+ */
 class Consumer extends EventEmitter {
   /** @internal */
   _conn: Connection
@@ -73,6 +106,7 @@ class Consumer extends EventEmitter {
     this._connect()
   }
 
+  /** @internal */
   private _makeReplyfn(req: AsyncMessage): ReplyFN {
     return (body, envelope) => {
       if (!req.replyTo)
