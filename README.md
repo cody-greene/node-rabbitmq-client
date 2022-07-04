@@ -92,6 +92,7 @@ The following methods aim to abstract all of that away by running the necessary 
 
 - {@link Connection.createPublisher | Connection.createPublisher(config)}
 - {@link Connection.createConsumer | Connection.createConsumer(config, cb)}
+- {@link Connection.createRPCClient | Connection.createRPCClient(config)}
 
 ```javascript
 const rabbit = new Connection()
