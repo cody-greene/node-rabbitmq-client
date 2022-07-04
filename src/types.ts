@@ -179,6 +179,8 @@ export interface MethodParams {
     arguments?: {
       /** https://www.rabbitmq.com/consumer-priority.html */
       'x-priority'?: number,
+      /** https://www.rabbitmq.com/ha.html#cancellation */
+      'x-cancel-on-ha-failover'?: boolean,
       [k: string]: unknown
     },
     /** Specifies the identifier for the consumer. The consumer tag is local to
