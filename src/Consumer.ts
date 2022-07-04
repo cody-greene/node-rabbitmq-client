@@ -122,6 +122,7 @@ class Consumer extends EventEmitter {
 
   /** @internal */
   private async _processMessage(msg: AsyncMessage) {
+    // n.b. message MUST ack/nack on the same channel to which it is delivered
     const {_ch: ch} = this
     if (!ch) return // satisfy the type checker but this should never happen
     try {
@@ -144,6 +145,13 @@ class Consumer extends EventEmitter {
 
   /** @internal */
   private async _setup() {
+    // wait for in-progress jobs to complete before retrying
+    await Promise.allSettled(this._processing)
+    this._processing.clear()
+    if (this._readyState === READY_STATE.CLOSING) {
+      return // abort setup
+    }
+
     let {_ch: ch, _props: props} = this
     if (!ch || !ch.active) {
       ch = this._ch = await this._conn.acquire()

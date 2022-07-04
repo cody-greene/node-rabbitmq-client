@@ -1,3 +1,7 @@
+# v3.1.1
+- Consumer setup waits for in-progress jobs to complete before retrying
+- add "x-cancel-on-ha-failover" typedef
+
 # v3.1.0
 - add Connection.createRPClient() for easy RPC/request-response setup
 - fix header array encode/decode e.g. CC/BCC "Sender-selected Distribution"
