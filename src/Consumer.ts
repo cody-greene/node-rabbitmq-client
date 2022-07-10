@@ -6,7 +6,8 @@ import {expBackoff} from './util'
 
 type BasicConsumeParams = MethodParams['basic.consume']
 export interface ConsumerProps extends BasicConsumeParams {
-  /** Requeue message when the handler throws an Error (see basicNack) */
+  /** (default=true) Requeue message when the handler throws an Error (see
+   * {@link Channel.basicNack}) */
   requeue?: boolean,
   /** Additional options when declaring the queue just before creating the
    * consumer and whenever the connection is reset. */

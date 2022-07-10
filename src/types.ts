@@ -243,9 +243,16 @@ export interface MethodParams {
      * is 1, and the delivery tag is zero, this indicates rejection of all
      * outstanding messages. */
     multiple?: boolean,
-    /** If requeue is true, the server will attempt to requeue the message. If
-     * requeue is false or the requeue attempt fails the messages are discarded
-     * or dead-lettered. */
+    /** (default=true) If requeue is true, the server will attempt to requeue
+     * the message. If requeue is false or the requeue attempt fails the
+     * messages are discarded or dead-lettered. The default should be TRUE,
+     * according to the AMQP specification, however this can lead to an endless
+     * retry-loop if you're not careful. Messages consumed from a {@link
+     * https://www.rabbitmq.com/quorum-queues.html#poison-message-handling |
+     * quorum queue} will have the "x-delivery-count" header, allowing you to
+     * discard a message after too many attempted deliveries. For classic
+     * mirrored queues, or non-mirrored queues, you will need to construct your
+     * own mechanism for discarding poison messages. */
     requeue?: boolean
   },
   'basic.publish': {
