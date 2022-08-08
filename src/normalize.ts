@@ -102,17 +102,13 @@ export default function normalizeOptions(raw?: string|ConnectionOptions): Valida
     props.password = decodeURIComponent(url.password)
     props.vhost = decodeURIComponent(url.pathname.split('/')[1] || '/')
     props.hostname = url.hostname
-    if (url.port) {
-      props.port = url.port
+    if (url.protocol === 'amqp:') {
+      props.port = url.port || TCP_PORT
+    } else if (url.protocol === 'amqps:') {
+      props.port = url.port || TLS_PORT
+      props.tls = props.tls || true
     } else {
-      if (url.protocol === 'amqp:') {
-        props.port = url.port = TCP_PORT
-      } else if (url.protocol === 'amqps:') {
-        props.port = url.port = TLS_PORT
-        props.tls = props.tls || true
-      } else {
-        throw new Error('unsupported protocol in connectionString; expected amqp: or amqps:')
-      }
+      throw new Error('unsupported protocol in connectionString; expected amqp: or amqps:')
     }
 
     const heartbeat = parseInt(url.searchParams.get('heartbeat')!)
