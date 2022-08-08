@@ -449,8 +449,9 @@ export interface MethodParams {
       'x-overflow'?: 'drop-head' | 'reject-publish' | 'reject-publish-dlx',
       /** https://www.rabbitmq.com/priority.html */
       'x-max-priority'?: number,
-      /** https://www.rabbitmq.com/quorum-queues.html */
-      'x-queue-type'?: 'quorum' | 'classic',
+      /** https://www.rabbitmq.com/quorum-queues.html
+       * https://www.rabbitmq.com/streams.html */
+      'x-queue-type'?: 'quorum' | 'classic' | 'stream',
       [k: string]: unknown
     },
     /** If set, the queue is deleted when all consumers have finished using it.
