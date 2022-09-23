@@ -642,6 +642,15 @@ test('should encode/decode array values in message headers', async (t) => {
   await rabbit.close()
 })
 
+test('handles (un)auth error', async (t) => {
+  const wrongurl = new URL(RABBITMQ_URL || 'amqp://guest:guest@localhost:5672')
+  wrongurl.password = 'badpassword'
+  const rabbit = new Connection(wrongurl.toString())
+  const err = await expectEvent(rabbit, 'error')
+  t.equal(err.code, 'ACCESS_REFUSED')
+  await rabbit.close()
+})
+
 // TODO opt.frameMax
 // TODO frame errors / unexpected channel
 // TODO codec

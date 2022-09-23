@@ -328,7 +328,11 @@ class Connection extends EventEmitter {
       const frame = await codec.decodeFrame(read)
       if (frame.channelId === 0 && frame.type === 'method' && frame.fullName === fullName)
         return frame.params
-      throw new AMQPConnectionError('COMMAND_INVALID', 'received unexpected frame during negotiation')
+      if (frame.type === 'method' && frame.fullName === 'connection.close') {
+        throw new AMQPConnectionError(frame.params)
+      }
+      throw new AMQPConnectionError('COMMAND_INVALID',
+        'received unexpected frame during negotiation: ' + JSON.stringify(frame))
     }
 
     // check for version mismatch (only on first chunk)

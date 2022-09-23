@@ -1,3 +1,6 @@
+# v3.1.3
+- improved error message when user/passwd is incorrect, i.e. ACCESS_REFUSED
+
 # v3.1.1
 - Consumer setup waits for in-progress jobs to complete before retrying
 - add "x-cancel-on-ha-failover" typedef
