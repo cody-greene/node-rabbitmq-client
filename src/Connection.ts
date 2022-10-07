@@ -197,6 +197,7 @@ class Connection extends EventEmitter {
     let _ch: Channel|undefined
     let pendingSetup: Promise<Channel>|undefined
     let isClosed = false
+    let maxAttempts = props.maxAttempts || 1
     const emitter = new EventEmitter()
 
     const setup = async () => {
@@ -219,17 +220,31 @@ class Connection extends EventEmitter {
       return ch
     }
 
+    const publish = (envelope: Envelope, body: MessageBody) => {
+      if (isClosed)
+        return Promise.reject(new AMQPChannelError('CLOSED', 'publisher is closed'))
+      if (!_ch?.active) {
+        if (!pendingSetup)
+          pendingSetup = setup().finally(() =>{ pendingSetup = undefined })
+        return pendingSetup.then(ch => ch.basicPublish(envelope, body))
+      }
+      return _ch.basicPublish(envelope, body)
+    }
+
+    const publishWithRetry = async (envelope: Envelope, body: MessageBody) => {
+      let attempts = 0
+      while (true) try {
+        return await publish(envelope, body)
+      } catch (err) {
+        if (++attempts >= maxAttempts)
+          throw err
+        else // notify & loop
+          emitter.emit('retry', err, envelope, body)
+      }
+    }
+
     return Object.assign(emitter, {
-      publish(envelope: Envelope, body: MessageBody) {
-        if (isClosed)
-          return Promise.reject(new AMQPChannelError('CLOSED', 'publisher is closed'))
-        if (!_ch?.active) {
-          if (!pendingSetup)
-            pendingSetup = setup().finally(() =>{ pendingSetup = undefined })
-          return pendingSetup.then(ch => ch.basicPublish(envelope, body))
-        }
-        return _ch.basicPublish(envelope, body)
-      },
+      publish: maxAttempts >= 2 ? publishWithRetry : publish,
       close() {
         isClosed = true
         if (pendingSetup)

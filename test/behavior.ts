@@ -558,6 +558,31 @@ test('Publisher should retry failed setup', async (t) => {
   await rabbit.close()
 })
 
+test('Publisher (maxAttempts) should retry failed publish', async (t) => {
+  const exchange = '__test_ce7cea6070c084fe'
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+  const pro = rabbit.createPublisher({
+    confirm: true,
+    maxAttempts: 2,
+    exchanges: [{exchange}]
+  })
+  // establish the internal Channel and exchange (lazy setup)
+  await pro.publish({exchange}, 'test1')
+  // deleting the exchange should cause the next publish to fail
+  await ch.exchangeDelete({exchange})
+
+  const [err] = await Promise.all([
+    expectEvent(pro, 'retry'),
+    pro.publish({exchange}, 'test2')
+  ])
+  t.equal(err.code, 'NOT_FOUND', 'got retry event')
+  t.pass('publish succeeded eventually')
+  await ch.close()
+  await pro.close()
+  await rabbit.close()
+})
+
 test('Connection should retry with next cluster node', async (t) => {
   t.plan(11)
 
