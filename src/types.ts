@@ -75,6 +75,12 @@ export interface HeaderFields {
 export interface PublisherProps {
   /** Enable publish-confirm mode. See {@link Channel.confirmSelect} */
   confirm?: boolean,
+  /** (default=1) Maximum publish attempts. Retries are disabled by default.
+   * Increase this number to retry when a publish fails. The Connection options
+   * acquireTimeout, retryLow, and retryHigh will affect time between retries.
+   * Each failed attempt will also emit a "retry" event.
+   * */
+  maxAttempts?: number,
   /** see {@link Channel.on}('basic.return') */
   onReturn?: (msg: ReturnedMessage) => void,
   /**
@@ -105,6 +111,8 @@ export interface Publisher extends EventEmitter {
   publish(envelope: string|Envelope, body: MessageBody): Promise<void>,
   /** Same as {@link Channel.on}('basic.return') */
   on(name: 'basic.return', cb: (msg: ReturnedMessage) => void): this;
+  /** See maxAttempts. Emitted each time a failed publish will be retried. */
+  on(name: 'retry', cb: (err: any, envelope: Envelope, body: MessageBody) => void): this;
   /** Close the underlying channel */
   close(): Promise<void>
 }
