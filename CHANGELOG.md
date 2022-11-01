@@ -1,3 +1,6 @@
+# v3.2.0
+- feat: add Publisher maxAttempts [#5](https://github.com/cody-greene/node-rabbitmq-client/pull/5)
+
 # v3.1.3
 - improved error message when user/passwd is incorrect, i.e. ACCESS_REFUSED
 
