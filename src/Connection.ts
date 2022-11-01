@@ -191,7 +191,7 @@ class Connection extends EventEmitter {
    * Create a message publisher that can recover from dropped connections.
    * This will create a dedicated Channel, declare queues, declare exchanges,
    * and declare bindings. If the connection is reset, then all of this setup
-   * will rerun on a new Channel.
+   * will rerun on a new Channel. This also supports retries.
    */
   createPublisher(props: PublisherProps = {}): Publisher {
     let _ch: Channel|undefined
@@ -244,7 +244,7 @@ class Connection extends EventEmitter {
     }
 
     return Object.assign(emitter, {
-      publish: maxAttempts >= 2 ? publishWithRetry : publish,
+      publish: maxAttempts > 1 ? publishWithRetry : publish,
       close() {
         isClosed = true
         if (pendingSetup)

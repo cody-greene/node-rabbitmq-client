@@ -99,8 +99,10 @@ const rabbit = new Connection()
 
 // See API docs for all options
 const pro = rabbit.createPublisher({
-  // call Channel.confirmSelect()
+  // enable acknowledgements (resolve with error if publish is unsuccessful)
   confirm: true,
+  // enable retries
+  maxAttempts: 2,
   // ensure the existence of an exchange before we use it otherwise we could
   // get a NOT_FOUND error
   exchanges: [{exchange: 'my-events', type: 'topic', autoDelete: true}]
