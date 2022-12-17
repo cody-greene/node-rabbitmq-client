@@ -1,12 +1,7 @@
-import EventEmitter from 'node:events'
 import {Socket, createServer} from 'node:net'
 import {DataFrame} from '../src/types'
 import {decodeFrame} from '../src/codec'
-import {createAsyncReader} from '../src/util'
-
-function expectEvent(emitter: EventEmitter, name: string): Promise<any> {
-  return new Promise<void>((resolve) => { emitter.once(name, resolve) })
-}
+import {expectEvent, createAsyncReader} from '../src/util'
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -55,4 +50,4 @@ async function useFakeServer(cb: ConnectionCallback|Array<ConnectionCallback>) {
   return [addr.port, server] as const
 }
 
-export {useFakeServer, sleep, expectEvent}
+export {useFakeServer, sleep}

@@ -1,7 +1,10 @@
 import test from 'tape'
-import Connection from '../src'
-import {createDeferred, Deferred} from '../src/util'
-import {expectEvent, sleep} from './util'
+import Connection, {AsyncMessage} from '../src'
+import {PREFETCH_EVENT} from '../src/Consumer'
+import {expectEvent, createDeferred, Deferred} from '../src/util'
+import {sleep} from './util'
+
+type TMParams = [Deferred<void>, AsyncMessage]
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 
@@ -95,7 +98,6 @@ test('Connection#createConsumer()', async (t) => {
   await rabbit.close()
 })
 
-
 test('Consumer does not create duplicates when setup temporarily fails', async (t) => {
   const rabbit = new Connection({
     url: RABBITMQ_URL,
@@ -154,7 +156,7 @@ test('Consumer waits for in-progress jobs to complete before reconnecting', asyn
 
   await sleep(25)
   job1.resolve()
-  const err = await expectEvent(consumer, 'error') //
+  const err = await expectEvent(consumer, 'error')
   t.is(err.code, 'CH_CLOSE', 'old channel is closed')
   const [job2, msg2] = await expectEvent(consumer, 'test.message')
   job2.resolve()
@@ -162,6 +164,124 @@ test('Consumer waits for in-progress jobs to complete before reconnecting', asyn
   t.is(msg2.redelivered, true, 'consumed redelivered message after delay')
 
   await consumer.close()
+  await ch.close()
+  await rabbit.close()
+})
+
+test('Consumer should limit handler concurrency', async (t) => {
+  const rabbit = new Connection({
+    url: RABBITMQ_URL,
+    retryHigh: 25,
+  })
+  const queue = '__test1c23944c0f14a28f__'
+  const consumer = rabbit.createConsumer({
+    queue: queue,
+    queueOptions: {exclusive: true},
+    concurrency: 1,
+  }, (msg) => {
+    const dfd = createDeferred()
+    consumer.emit('test.message', [dfd, msg])
+    // complete the job at some later time with dfd.resolve()
+    return dfd.promise
+  })
+
+  type TMParams = [Deferred<void>, AsyncMessage]
+
+  await expectEvent(consumer, 'ready')
+  const ch = await rabbit.acquire()
+  await Promise.all([
+    ch.basicPublish(queue, 'red'),
+    ch.basicPublish(queue, 'blue'),
+    ch.basicPublish(queue, 'green'),
+  ])
+  const [job1, msg1] = await expectEvent<TMParams>(consumer, 'test.message')
+  await expectEvent(consumer, PREFETCH_EVENT)
+  await expectEvent(consumer, PREFETCH_EVENT)
+  t.is(msg1.body, 'red', 'consumed a message')
+  t.is(msg1.redelivered, false, 'redelivered=false')
+  t.is(consumer._prefetched.length, 2, '2nd message got buffered')
+  job1.resolve()
+
+  const [job2a, msg2a] = await expectEvent<TMParams>(consumer, 'test.message')
+  t.is(msg2a.body, 'blue', 'consumed 2nd message')
+  t.is(msg2a.redelivered, false, 'redelivered=false')
+  t.is(consumer._prefetched.length, 1, '3rd message still buffered')
+
+  // intentionally cause a channel error so setup has to rerun
+  await consumer._ch!.basicAck({deliveryTag: 404})
+  await expectEvent(rabbit, 'error')
+  t.is(consumer._prefetched.length, 0, 'buffered message was dropped')
+
+  job2a.resolve()
+  const err = await expectEvent(consumer, 'error')
+  t.is(err.code, 'CH_CLOSE', 'old channel is closed')
+
+  // messages should be redelivered after channel error
+
+  const [job2b, msg2b] = await expectEvent<TMParams>(consumer, 'test.message')
+  t.is(msg2b.body, 'blue', 'consumed 2nd message again')
+  t.is(msg2b.redelivered, true, 'redelivered=true')
+  job2b.resolve()
+
+  const [job3, msg3] = await expectEvent<TMParams>(consumer, 'test.message')
+  t.is(msg3.body, 'green', 'consumed 3rd message')
+  t.is(msg3.redelivered, true, 'redelivered=true')
+  job3.resolve()
+
+  await consumer.close()
+  await ch.close()
+  await rabbit.close()
+})
+
+test('Consumer concurrency with noAck=true', async (t) => {
+  const rabbit = new Connection({
+    url: RABBITMQ_URL,
+    retryHigh: 25,
+  })
+  const queue = '__test1c23944c0f14a28f__'
+  const consumer = rabbit.createConsumer({
+    queue: queue,
+    noAck: true,
+    queueOptions: {exclusive: true},
+    concurrency: 1,
+  }, (msg) => {
+    const dfd = createDeferred()
+    consumer.emit('test.message', [dfd, msg])
+    // complete the job at some later time with dfd.resolve()
+    return dfd.promise
+  })
+
+  await expectEvent(consumer, 'ready')
+  const ch = await rabbit.acquire()
+
+  await Promise.all([
+    ch.basicPublish(queue, 'red'),
+    ch.basicPublish(queue, 'blue'),
+  ])
+
+  const [job1, msg1] = await expectEvent<TMParams>(consumer, 'test.message')
+  t.is(msg1.body, 'red', 'consumed 1st message')
+  await expectEvent(consumer, PREFETCH_EVENT)
+  t.is(consumer._prefetched.length, 1, '2nd message got buffered')
+
+  // intentionally cause a channel error
+  await consumer._ch!.basicAck({deliveryTag: 404})
+  await expectEvent(rabbit, 'error')
+  t.is(consumer._prefetched.length, 1, 'buffered message remains')
+
+  // with noAck=true, close() should wait for remaining messages to process
+  const consumerClosed = consumer.close()
+
+  // should not emit an error after the channel reset
+  job1.resolve()
+
+  const [job2, msg2] = await expectEvent<TMParams>(consumer, 'test.message')
+  t.is(msg2.body, 'blue', 'consumed 2nd message')
+  t.is(msg2.redelivered, false, 'redelivered=false')
+
+  job2.resolve()
+
+  await consumerClosed
   await ch.close()
   await rabbit.close()
 })

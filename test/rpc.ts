@@ -1,6 +1,6 @@
 import test from 'tape'
 import Connection from '../src'
-import {expectEvent} from './util'
+import {expectEvent} from '../src/util'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 

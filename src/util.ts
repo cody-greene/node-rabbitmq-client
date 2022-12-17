@@ -1,6 +1,7 @@
 import {AMQPConnectionError} from './exception'
 import {Readable, Writable} from 'node:stream'
 import {promisify} from 'node:util'
+import EventEmitter from 'node:events'
 
 /** @internal */
 export interface Deferred<T=any> {
@@ -147,4 +148,8 @@ export class EncoderStream<T=unknown> extends Writable {
       cb()
     }
   }
+}
+
+export function expectEvent<T=any>(emitter: EventEmitter, name: string|symbol): Promise<T> {
+  return new Promise<T>((resolve) => { emitter.once(name, resolve) })
 }

@@ -1,9 +1,9 @@
 import test from 'tape'
 import Connection, {AsyncMessage} from '../src'
 import {createServer} from 'node:net'
-import {createDeferred, Deferred} from '../src/util'
+import {expectEvent, createDeferred, Deferred} from '../src/util'
 import {MethodFrame} from '../src/types'
-import {useFakeServer, expectEvent, sleep} from './util'
+import {useFakeServer, sleep} from './util'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 

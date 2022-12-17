@@ -2,10 +2,21 @@ import EventEmitter from 'node:events'
 import {READY_STATE, AsyncMessage, MethodParams, MessageBody, Envelope} from './types'
 import type Channel from './Channel'
 import type Connection from './Connection'
-import {expBackoff} from './util'
+import {expBackoff, expectEvent} from './util'
+
+/** @internal */
+export const IDLE_EVENT = Symbol('idle')
+/** @internal */
+export const PREFETCH_EVENT = Symbol('prefetch')
 
 type BasicConsumeParams = MethodParams['basic.consume']
 export interface ConsumerProps extends BasicConsumeParams {
+  /** Non-zero positive integer. Maximum number of messages to process at once.
+   * Should be less than or equal to "qos.prefetchCount". Any prefetched, but
+   * unworked, messages will be requeued when the consumer is closed (unless
+   * noAck=true, when every received message will be processed).
+   * @default Infinity */
+  concurrency?: number,
   /** (default=true) Requeue message when the handler throws an Error (see
    * {@link Channel.basicNack}) */
   requeue?: boolean,
@@ -30,8 +41,8 @@ export type ReplyFN = (body: MessageBody, envelope?: Envelope) => Promise<void>
 /**
  * @param msg The incoming message
  * @param reply Reply to an RPC-type message. Like basicPublish() but the
- * message body comes first, and the routingKey, exchange, and correlationId
- * are automatically set.
+ * message body comes first. Some fields are also set automaticaly:
+ * routingKey=msg.replyTo, exchange='', correlationId=msg.correlationId
  */
 export type ConsumerHandler = (msg: AsyncMessage, reply: ReplyFN) => Promise<void>|void
 
@@ -54,10 +65,17 @@ declare interface Consumer {
  * The handler is called for each incoming message. If it throws an error or
  * returns a rejected Promise then the message is rejected with "basic.nack"
  *
+ * About concurency: For best performance, you'll likely want to start with
+ * concurrency=X and qos.prefetchCount=2X. In other words, up to 2X messages
+ * are loaded into memory, but only X ConsumerHandlers are running
+ * concurrently. The consumer won't need to wait for a new message if one has
+ * alredy been prefetched, minimizing idle time. With more worker processes,
+ * you will want a lower prefetchCount to avoid worker-starvation.
+ *
  * The 2nd argument of `handler(msg, reply)` can be used to reply to RPC
  * requests. e.g. `await reply('my-response-body')`. This acts like
- * basicPublish() except the message body comes first, and the routingKey is
- * automatically set.
+ * basicPublish() except the message body comes first. Some fields are also set
+ * automaticaly. See ConsumerHandler for more detail.
  *
  * This is an EventEmitter that may emit errors. Also, since this wraps a
  * Channel, this must be closed before closing the Connection.
@@ -75,6 +93,10 @@ declare interface Consumer {
  * ```
  */
 class Consumer extends EventEmitter {
+  /** Maximum number of messages to process at once. Non-zero positive integer.
+   * Writeable. */
+  concurrency: number
+
   /** @internal */
   _conn: Connection
   /** @internal */
@@ -85,6 +107,8 @@ class Consumer extends EventEmitter {
   _props: ConsumerProps
   /** @internal */
   _consumerTag = ''
+  /** @internal */
+  _prefetched: Array<AsyncMessage> = []
   /** @internal */
   _processing = new Set<Promise<void>>()
   /** @internal */
@@ -103,6 +127,8 @@ class Consumer extends EventEmitter {
     this._handler = handler
     this._props = props
     this._connect = this._connect.bind(this)
+    this.concurrency = props.concurrency && Number.isInteger(props.concurrency)
+      ? Math.max(1, props.concurrency) : Infinity
 
     this._connect()
   }
@@ -122,7 +148,7 @@ class Consumer extends EventEmitter {
   }
 
   /** @internal */
-  private async _processMessage(msg: AsyncMessage) {
+  private async _execHandler(msg: AsyncMessage) {
     // n.b. message MUST ack/nack on the same channel to which it is delivered
     const {_ch: ch} = this
     if (!ch) return // satisfy the type checker but this should never happen
@@ -144,11 +170,24 @@ class Consumer extends EventEmitter {
     }
   }
 
+  /** @internal*/
+  private _prepareMessage(msg: AsyncMessage): void {
+      const prom = this._execHandler(msg)
+      this._processing.add(prom)
+      prom.finally(() => {
+        this._processing.delete(prom)
+        if (this._processing.size < this.concurrency && this._prefetched.length) {
+          this._prepareMessage(this._prefetched.shift()!)
+        } else if (!this._processing.size) {
+          this.emit(IDLE_EVENT)
+        }
+      })
+  }
+
   /** @internal */
   private async _setup() {
     // wait for in-progress jobs to complete before retrying
     await Promise.allSettled(this._processing)
-    this._processing.clear()
     if (this._readyState === READY_STATE.CLOSING) {
       return // abort setup
     }
@@ -157,8 +196,11 @@ class Consumer extends EventEmitter {
     if (!ch || !ch.active) {
       ch = this._ch = await this._conn.acquire()
       ch.once('close', () => {
-        if (this._readyState === READY_STATE.CLOSING) {
-          this._readyState = READY_STATE.CLOSED
+        if (!this._props.noAck) {
+          // clear any buffered messages since they can't be ACKd on a new channel
+          this._prefetched = []
+        }
+        if (this._readyState >= READY_STATE.CLOSING) {
           return
         }
         this._readyState = READY_STATE.CONNECTING
@@ -185,11 +227,14 @@ class Consumer extends EventEmitter {
     if (props.qos)
       await ch.basicQos(props.qos)
     const {consumerTag} = await ch.basicConsume(props, (msg) => {
-      const promise = this._processMessage(msg)
-      if (!props.noAck) {
-        // track pending message handlers
-        this._processing.add(promise)
-        promise.finally(() => { this._processing.delete(promise) })
+      const shouldBuffer = (this._prefetched.length) // don't skip the queue
+        || (this._processing.size >= this.concurrency) // honor the concurrency limit
+        || (!this._props.noAck && this._readyState === READY_STATE.CLOSING) // prevent new work while closing
+      if (shouldBuffer && Number.isFinite(this.concurrency)) {
+        this._prefetched.push(msg)
+        this.emit(PREFETCH_EVENT)
+      } else {
+        this._prepareMessage(msg)
       }
     })
     this._consumerTag = consumerTag
@@ -219,7 +264,7 @@ class Consumer extends EventEmitter {
     this._pendingSetup = this._setup().finally(() => {
       this._pendingSetup = undefined
     }).catch(err => {
-      if (this._readyState === READY_STATE.CLOSING)
+      if (this._readyState >= READY_STATE.CLOSING)
         return
       this._readyState = READY_STATE.CONNECTING
       err.message = 'consumer setup failed; ' + err.message
@@ -251,8 +296,6 @@ class Consumer extends EventEmitter {
   async close(): Promise<void> {
     if (this._readyState === READY_STATE.CLOSED)
       return
-    if (this._readyState === READY_STATE.CLOSING)
-      return new Promise(resolve => this._ch!.once('close', resolve))
 
     this._readyState = READY_STATE.CLOSING
     if (this._retryTimer)
@@ -260,14 +303,24 @@ class Consumer extends EventEmitter {
     this._retryTimer = undefined
     await this._pendingSetup
     const {_ch: ch} = this
-    if (!ch?.active) {
-      this._readyState = READY_STATE.CLOSED
-      return
+    if (ch?.active && this._consumerTag) {
+      // n.b. Some messages may arrive before basic.cancel-ok is received
+      const consumerTag = this._consumerTag
+      this._consumerTag = ''
+      await ch.basicCancel({consumerTag})
     }
-    if (this._consumerTag)
-      await ch.basicCancel({consumerTag: this._consumerTag})
+    if (!this._props.noAck && this._prefetched.length) {
+      // any buffered/unacknowledged messages will be redelivered by the broker
+      // after the channel is closed
+      this._prefetched = []
+    } else if (this._props.noAck && this._prefetched.length) {
+      // in this case, buffered messages will not be requeued so we must wait
+      // for them to process
+      await expectEvent(this, IDLE_EVENT)
+    }
     await Promise.allSettled(this._processing)
-    await ch.close()
+    await ch?.close()
+    this._readyState = READY_STATE.CLOSED
   }
 }
 
