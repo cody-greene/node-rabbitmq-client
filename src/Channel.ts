@@ -147,15 +147,15 @@ class Channel extends EventEmitter {
 
   /** @internal */
   _resolveCallback<T extends keyof MethodParams>(fullName: T, params: MethodParams[T]) {
-    const pair = this._state.callbacks[0]
-    if (!pair || pair[0] !== fullName) {
+    // try to find the first index with such fullName
+    const index = this._state.callbacks.findIndex(pair => pair [0] == fullName)
+    if (index < 0) {
       // this is a bug; should never happen
       throw new AMQPConnectionError('UNEXPECTED_FRAME',
         `client received unexpected method ch${this.id}:${fullName} ${JSON.stringify(params)}`)
-    } else {
-      this._state.callbacks.shift()
-      pair[1].resolve(params)
     }
+    const pairs = this._state.callbacks.splice(index, 1)
+    pairs[0][1].resolve(params)
   }
 
   /** @internal Try to reject a pending callback or emit the error */
