@@ -8,20 +8,6 @@ import SPEC from './spec'
 
 enum CH_MODE {NORMAL, TRANSACTION, CONFIRM}
 
-const NOWAIT_METHODS = [
-  'basic.cancel',
-  'basic.consume',
-  'confirm.select',
-  'exchange.bind',
-  'exchange.declare',
-  'exchange.delete',
-  'exchange.unbind',
-  'queue.bind',
-  'queue.declare',
-  'queue.delete',
-  'queue.purge'
-]
-
 /** For basic.consume */
 export type ConsumerCallback = (msg: AsyncMessage) => void
 /**
@@ -337,11 +323,6 @@ class Channel extends EventEmitter {
     if (!this.active) return activeCheckPromise()
     const it = genMethodFrame(this.id, fullName, params)
     await this._state.stream.writeAsync(it)
-    // n.b. nowait is problematic for queue.declare and basic.consume since these
-    // can generate random names (queue & consumerTag)
-    // @ts-ignore not all methods have the "nowait" param
-    if (params?.nowait && NOWAIT_METHODS.includes(fullName))
-      return
     // @ts-ignore MethodParams<T-ok>
     return this._addCallback(fullName + '-ok')
   }
@@ -413,11 +394,7 @@ class Channel extends EventEmitter {
    * channel they were declared on, or until the client cancels them.
    */
   async basicConsume(params: MethodParams['basic.consume'], fn: ConsumerCallback): Promise<Required<MethodParams['basic.consume-ok']>> {
-    if (params.nowait && !params.consumerTag) {
-      throw new Error('consumerTag must be defined when nowait=true')
-    }
-    // will return undefined when nowait=true
-    const data = await this._invoke('basic.consume', params)
+    const data = await this._invoke('basic.consume', {...params, nowait: false})
     const consumerTag = params.consumerTag || data.consumerTag
     this._state.consumers.set(consumerTag, fn)
     return {consumerTag}
@@ -429,7 +406,7 @@ class Channel extends EventEmitter {
       params = {consumerTag: params}
     }
     // note: server may send a few messages before basic.cancel-ok is returned
-    const res = await this._invoke('basic.cancel', params)
+    const res = await this._invoke('basic.cancel', {...params, nowait: false})
     this._state.consumers.delete(params.consumerTag)
     return res
   }
@@ -464,10 +441,8 @@ class Channel extends EventEmitter {
     if (!this.active) return activeCheckPromise()
     if (params == null) {
       params = {}
-    } else if (params.nowait && !params.queue) {
-      throw new Error('queue must be defined when nowait=true')
     }
-    const result = await this._invoke('queue.declare', params)
+    const result = await this._invoke('queue.declare', {...params, nowait: false})
     if (result == null) {
       // result will be undefined when nowait=true
       return {queue: params.queue!, messageCount: 0, consumerCount: 0}
@@ -500,19 +475,19 @@ class Channel extends EventEmitter {
   }
   /** Bind exchange to an exchange. */
   exchangeBind(params: MethodParams['exchange.bind']): Promise<Required<MethodParams['exchange.bind-ok']>> {
-    return this._invoke('exchange.bind', params)
+    return this._invoke('exchange.bind', {...params, nowait: false})
   }
   /** Verify exchange exists, create if needed. */
   exchangeDeclare(params: MethodParams['exchange.declare']): Promise<Required<MethodParams['exchange.declare-ok']>> {
-    return this._invoke('exchange.declare', params)
+    return this._invoke('exchange.declare', {...params, nowait: false})
   }
   /** Delete an exchange. */
   exchangeDelete(params: MethodParams['exchange.delete']): Promise<Required<MethodParams['exchange.delete-ok']>> {
-    return this._invoke('exchange.delete', params)
+    return this._invoke('exchange.delete', {...params, nowait: false})
   }
   /** Unbind an exchange from an exchange. */
   exchangeUnbind(params: MethodParams['exchange.unbind']): Promise<Required<MethodParams['exchange.unbind-ok']>> {
-    return this._invoke('exchange.unbind', params)
+    return this._invoke('exchange.unbind', {...params, nowait: false})
   }
   /**
    * This method binds a queue to an exchange. Until a queue is bound it will
@@ -521,7 +496,7 @@ class Channel extends EventEmitter {
    * a topic exchange.
    */
   queueBind(params: MethodParams['queue.bind']): Promise<Required<MethodParams['queue.bind-ok']>> {
-    return this._invoke('queue.bind', params)
+    return this._invoke('queue.bind', {...params, nowait: false})
   }
   /**
    *  This method deletes a queue. When a queue is deleted any pending messages
@@ -529,14 +504,14 @@ class Channel extends EventEmitter {
    *  configuration, and all consumers on the queue are cancelled.
    */
   queueDelete(params: MethodParams['queue.delete']): Promise<Required<MethodParams['queue.delete-ok']>> {
-    return this._invoke('queue.delete', params)
+    return this._invoke('queue.delete', {...params, nowait: false})
   }
   /**
    * This method removes all messages from a queue which are not awaiting
    * acknowledgment.
    */
   queuePurge(params: MethodParams['queue.purge']): Promise<Required<MethodParams['queue.purge-ok']>> {
-    return this._invoke('queue.purge', params)
+    return this._invoke('queue.purge', {...params, nowait: false})
   }
   /** Unbind a queue from an exchange. */
   queueUnbind(params: MethodParams['queue.unbind']): Promise<Required<MethodParams['queue.unbind-ok']>> {
