@@ -676,6 +676,23 @@ test('handles (un)auth error', async (t) => {
   await rabbit.close()
 })
 
+test('out-of-order RPC', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+  const queues = ['1a9370fa04be7108', '5be264772fdd703b']
+
+  await Promise.all([
+    ch.queueDeclare({queue: queues[0], exclusive: true}),
+    ch.basicConsume({queue: queues[0], consumerTag: 'red'}, () => {}),
+    ch.queueDeclare({queue: queues[1], exclusive: true}),
+  ])
+
+  // rabbit will emit an UNEXPECTED_FRAME err if a response arrives out of order
+
+  await ch.close()
+  await rabbit.close()
+})
+
 // TODO opt.frameMax
 // TODO frame errors / unexpected channel
 // TODO codec

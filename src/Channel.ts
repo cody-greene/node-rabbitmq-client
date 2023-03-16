@@ -23,8 +23,6 @@ interface AMQPMessage {
   chunks?: Buffer[]
 }
 
-type DeferredParams = Deferred<any> // MethodParams[keyof MethodParams]
-
 declare interface Channel {
   /** The specified consumer is stopped by the server. The error param
    * describes the reason for the cancellation. */
@@ -57,8 +55,9 @@ class Channel extends EventEmitter {
   private _state: {
     unconfirmed: Map<number, Deferred<void>>
     mode: CH_MODE
-    callbacks: Array<[string, DeferredParams]>
     maxFrameSize: number
+    rpc?: [dfd: Deferred<any>, fullName: string]
+    rpcBuffer: Array<readonly [dfd: Deferred<any>, fullName: string, it: Generator<Buffer, void>]>
     /** For tracking consumers created with basic.consume */
     consumers: Map<string, ConsumerCallback>
     incoming?: AMQPMessage
@@ -78,15 +77,15 @@ class Channel extends EventEmitter {
     this.id = id
     this.active = true
     this._state = {
-      callbacks: [],
       maxFrameSize: conn._opt.frameMax,
       deliveryCount: 1,
       mode: CH_MODE.NORMAL,
       unconfirmed: new Map(),
+      rpcBuffer: [],
       consumers: new Map(),
       stream: new EncoderStream(conn._socket)
     }
-    this._state.stream.on('error', async () => {
+    this._state.stream.on('error', () => {
       // don't need to propagate error here:
       // - if connection ended: already handled by the Connection class
       // - if encoding error: error recieved by write callback
@@ -99,18 +98,25 @@ class Channel extends EventEmitter {
     if (!this.active) {
       return
     }
+    this.active = false
     try {
-      this.active = false
+      // wait for encoder stream to end
       if (this._state.stream.writable) {
-        this._state.stream.end()
-        // should resolve if the stream drains and ends
-        // or if _clear() is called on connection or channel error
-        await new Promise<void>(resolve => this._state.stream.on('close', resolve))
+        if (!this._state.rpc)
+          this._state.stream.end()
+        await new Promise(resolve => this._state.stream.on('close', resolve))
       }
-      // write directly to the connection in case the channel stream encountered a codec error
+      // wait for final rpc, if it was already sent
+      if (this._state.rpc) {
+        const [dfd] = this._state.rpc
+        await dfd.promise
+      }
+      // send channel.close
+      const dfd = createDeferred()
+      this._state.rpc = [dfd, 'channel.close-ok']
       this._conn._writeMethod(this.id, 'channel.close',
         {replyCode: 200, classId: 0, methodId: 0})
-      await this._addCallback('channel.close-ok')
+      await dfd.promise
     } catch (err) {
       // ignored; if write fails because the connection closed then this is
       // technically a success. Can't have a channel without a connection!
@@ -121,50 +127,47 @@ class Channel extends EventEmitter {
     }
   }
 
-  /**
-   * Save a handler (run-once) for an AMQP synchronous method response
-   * @internal
-   */
-  _addCallback<T extends keyof MethodParams>(fullName: T): Promise<Required<MethodParams[T]>> {
-    const dfd = createDeferred()
-    this._state.callbacks.push([fullName, dfd])
-    return dfd.promise
-  }
-
   /** @internal */
-  _resolveCallback<T extends keyof MethodParams>(fullName: T, params: MethodParams[T]) {
-    const pair = this._state.callbacks[0]
-    if (!pair || pair[0] !== fullName) {
-      // this is a bug; should never happen
+  _resolveRPC<T extends keyof MethodParams>(fullName: T, params: MethodParams[T]) {
+    if (!this._state.rpc) {
       throw new AMQPConnectionError('UNEXPECTED_FRAME',
         `client received unexpected method ch${this.id}:${fullName} ${JSON.stringify(params)}`)
-    } else {
-      this._state.callbacks.shift()
-      pair[1].resolve(params)
+    }
+    const [dfd, expectedName] = this._state.rpc
+    this._state.rpc = undefined
+    if (expectedName !== fullName) {
+      throw new AMQPConnectionError('UNEXPECTED_FRAME',
+        `client received unexpected method ch${this.id}:${fullName} ${JSON.stringify(params)}`)
+    }
+    dfd.resolve(params)
+    if (this._state.stream.writable) {
+      if (!this.active)
+        this._state.stream.end()
+      else if (this._state.rpcBuffer.length > 0)
+        this._rpcNext(this._state.rpcBuffer.shift()!)
     }
   }
 
   /** @internal Try to reject a pending callback or emit the error */
   _rejectCallback(key: string, err: any) {
-    if (typeof key == 'string') {
-      if (key === 'basic.publish') {
-        // try to reject first unconfirmed message
-        for (const [tag, dfd] of this._state.unconfirmed.entries()) {
-          this._state.unconfirmed.delete(tag)
-          dfd.reject(err)
-          return
-        }
-      } else {
-        key = key + '-ok'
+    if (key === 'basic.publish') {
+      // try to reject first unconfirmed message
+      for (const [tag, dfd] of this._state.unconfirmed.entries()) {
+        this._state.unconfirmed.delete(tag)
+        dfd.reject(err)
+        return
+      }
+    } else {
+      key = key + '-ok'
+    }
+    if (this._state.rpc) {
+      const [dfd, expectedName] = this._state.rpc
+      if (expectedName === key) {
+        this._state.rpc = undefined
+        return dfd.reject(err)
       }
     }
-    const pair = this._state.callbacks[0]
-    if (!pair || pair[0] !== key) {
-      this._conn.emit('error', err)
-    } else {
-      this._state.callbacks.shift()
-      pair[1].reject(err)
-    }
+    this._conn.emit('error', err)
   }
 
   /**
@@ -175,13 +178,18 @@ class Channel extends EventEmitter {
     if (err == null)
       err = new AMQPChannelError('CH_CLOSE', 'channel is closed')
     this.active = false
-    for (const [, dfd] of this._state.callbacks) {
+    if (this._state.rpc) {
+      const [dfd] = this._state.rpc
+      this._state.rpc = undefined
+      dfd.reject(err)
+    }
+    for (const [dfd] of this._state.rpcBuffer) {
       dfd.reject(err)
     }
     for (const dfd of this._state.unconfirmed.values()) {
       dfd.reject(err)
     }
-    this._state.callbacks = []
+    this._state.rpcBuffer = []
     this._state.consumers.clear()
     this._state.unconfirmed.clear()
     this._state.stream.destroy(err)
@@ -198,7 +206,7 @@ class Channel extends EventEmitter {
       this._state.incoming = {methodFrame, headerFrame: undefined, chunks: undefined, received: 0}
     } else if (methodFrame.fullName === 'basic.get-empty') {
       // @ts-ignore special case since basic.get-empty is a valid response for basic.get
-      this._resolveCallback('basic.get-ok', undefined)
+      this._resolveRPC('basic.get-ok', undefined)
     } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.fullName === 'basic.ack') {
       const params: Required<MethodParams['basic.ack']> = methodFrame.params as any
       if (params.multiple) {
@@ -250,7 +258,7 @@ class Channel extends EventEmitter {
       this._conn._checkEmpty()
     //} else if (methodFrame.fullName === 'channel.flow') unsupported; https://blog.rabbitmq.com/posts/2014/04/breaking-things-with-rabbitmq-3-3
     } else {
-      this._resolveCallback(methodFrame.fullName, methodFrame.params)
+      this._resolveRPC(methodFrame.fullName, methodFrame.params)
     }
   }
 
@@ -313,18 +321,51 @@ class Channel extends EventEmitter {
           this.emit('basic.return', uncastMessage) // ReturnedMessage
         })
       } else if (methodFrame.fullName === 'basic.get-ok') {
-        this._resolveCallback(methodFrame.fullName, uncastMessage) // SyncMessage
+        this._resolveRPC(methodFrame.fullName, uncastMessage) // SyncMessage
       }
     }
   }
 
-  /** @internal */
-  async _invoke<T extends SyncMethods>(fullName: T, params: MethodParams[T]): Promise<any> {
+  /** @internal
+   * AMQP does not support RPC pipelining!
+   * C = client
+   * S = server
+   *
+   * C:basic.consume
+   * C:queue.declare
+   * ...
+   * S:queue.declare  <- response may arrive out of order
+   * S:basic.consume
+   *
+   * So we can only have one RPC in-flight at a time:
+   * C:basic.consume
+   * S:basic.consume
+   * C:queue.declare
+   * S:queue.declare
+   **/
+  _invoke<T extends SyncMethods>(fullName: T, params: MethodParams[T]): Promise<any> {
     if (!this.active) return activeCheckPromise()
+    const dfd = createDeferred()
     const it = genMethodFrame(this.id, fullName, params)
-    await this._state.stream.writeAsync(it)
-    // @ts-ignore MethodParams<T-ok>
-    return this._addCallback(fullName + '-ok')
+    const rpc = [dfd, fullName + '-ok', it] as const
+    if (this._state.rpc)
+      this._state.rpcBuffer.push(rpc)
+    else
+      this._rpcNext(rpc)
+    return dfd.promise
+  }
+
+  /** @internal
+   * Start the next RPC */
+  _rpcNext([dfd, fullName, it]: typeof this._state.rpcBuffer[number]) {
+    //const [dfd, fullName, it] = this._state.rpcBuffer.shift()!
+    this._state.rpc = [dfd, fullName]
+    this._state.stream.write(it, (err) => {
+      if (err) {
+        this._state.rpc = undefined
+        dfd.reject(err)
+      }
+    })
   }
 
   /** @internal */
@@ -438,7 +479,6 @@ class Channel extends EventEmitter {
    * name.
    */
   async queueDeclare(params?: MethodParams['queue.declare']): Promise<MethodParams['queue.declare-ok']> {
-    if (!this.active) return activeCheckPromise()
     if (params == null) {
       params = {}
     }
