@@ -1,3 +1,10 @@
+# v3.3.1
+- fix: out-of-order RPCs [#10](https://github.com/cody-greene/node-rabbitmq-client/pull/10)
+
+# v3.3.0
+- feat: expose Consumer.queue & Consumer.consumerTag fields
+- feat: add consumer concurrency limits [#6](https://github.com/cody-greene/node-rabbitmq-client/pull/6)
+
 # v3.2.0
 - feat: add Publisher maxAttempts [#5](https://github.com/cody-greene/node-rabbitmq-client/pull/5)
 
