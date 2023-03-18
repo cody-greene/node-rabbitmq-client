@@ -119,6 +119,10 @@ class Connection extends EventEmitter {
       throw new Error('maximum number of AMQP Channels already open')
     const ch = new Channel(id, this)
     this._state.leased.set(id, ch)
+    ch.once('close', () => {
+      this._state.leased.delete(id)
+      this._checkEmpty()
+    })
     await ch._invoke('channel.open', {})
     return ch
   }
