@@ -58,6 +58,7 @@ class Channel extends EventEmitter {
     maxFrameSize: number
     rpc?: [dfd: Deferred<any>, fullName: string]
     rpcBuffer: Array<readonly [dfd: Deferred<any>, fullName: string, it: Generator<Buffer, void>]>
+    cleared: boolean,
     /** For tracking consumers created with basic.consume */
     consumers: Map<string, ConsumerCallback>
     incoming?: AMQPMessage
@@ -82,6 +83,7 @@ class Channel extends EventEmitter {
       mode: CH_MODE.NORMAL,
       unconfirmed: new Map(),
       rpcBuffer: [],
+      cleared: false,
       consumers: new Map(),
       stream: new EncoderStream(conn._socket)
     }
@@ -105,10 +107,14 @@ class Channel extends EventEmitter {
         if (!this._state.rpc)
           this._state.stream.end()
         await new Promise(resolve => this._state.stream.on('close', resolve))
+      } else {
+        // if an rpc failed to encode then wait for it to clear
+        await new Promise(setImmediate)
       }
       // wait for final rpc, if it was already sent
       if (this._state.rpc) {
         const [dfd] = this._state.rpc
+        this._state.rpc = undefined
         await dfd.promise
       }
       // send channel.close
@@ -121,14 +127,34 @@ class Channel extends EventEmitter {
       // ignored; if write fails because the connection closed then this is
       // technically a success. Can't have a channel without a connection!
     } finally {
-      this._conn._state.leased.delete(this.id)
       this._clear()
-      this._conn._checkEmpty()
     }
   }
 
   /** @internal */
-  _resolveRPC<T extends keyof MethodParams>(fullName: T, params: MethodParams[T]) {
+  _handleRPC<T extends keyof MethodParams>(fullName: T, params: any) {
+    if (fullName === 'channel.close') {
+      this.active = false
+      this._conn._writeMethod(this.id, 'channel.close-ok', undefined)
+      const err = new AMQPChannelError(params)
+      const badName = SPEC.getFullName(params.classId, params.methodId)
+      if (badName === 'basic.publish' && this._state.unconfirmed.size > 0) {
+        // reject first unconfirmed message
+        const [tag, dfd] = this._state.unconfirmed.entries().next().value
+        this._state.unconfirmed.delete(tag)
+        dfd.reject(err)
+      } else if (this._state.rpc && (badName + '-ok') === this._state.rpc[1]) {
+        // or reject the rpc
+        const [dfd] = this._state.rpc
+        this._state.rpc = undefined
+        dfd.reject(err)
+      } else {
+        // last resort
+        this._conn.emit('error', err)
+      }
+      this._clear()
+      return
+    }
     if (!this._state.rpc) {
       throw new AMQPConnectionError('UNEXPECTED_FRAME',
         `client received unexpected method ch${this.id}:${fullName} ${JSON.stringify(params)}`)
@@ -148,33 +174,14 @@ class Channel extends EventEmitter {
     }
   }
 
-  /** @internal Try to reject a pending callback or emit the error */
-  _rejectCallback(key: string, err: any) {
-    if (key === 'basic.publish') {
-      // try to reject first unconfirmed message
-      for (const [tag, dfd] of this._state.unconfirmed.entries()) {
-        this._state.unconfirmed.delete(tag)
-        dfd.reject(err)
-        return
-      }
-    } else {
-      key = key + '-ok'
-    }
-    if (this._state.rpc) {
-      const [dfd, expectedName] = this._state.rpc
-      if (expectedName === key) {
-        this._state.rpc = undefined
-        return dfd.reject(err)
-      }
-    }
-    this._conn.emit('error', err)
-  }
-
   /**
    * Invoke all pending response handlers with an error
    * @internal
    */
   _clear(err?: Error) {
+    if (this._state.cleared)
+      return
+    this._state.cleared = true
     if (err == null)
       err = new AMQPChannelError('CH_CLOSE', 'channel is closed')
     this.active = false
@@ -186,12 +193,12 @@ class Channel extends EventEmitter {
     for (const [dfd] of this._state.rpcBuffer) {
       dfd.reject(err)
     }
+    this._state.rpcBuffer = []
     for (const dfd of this._state.unconfirmed.values()) {
       dfd.reject(err)
     }
-    this._state.rpcBuffer = []
-    this._state.consumers.clear()
     this._state.unconfirmed.clear()
+    this._state.consumers.clear()
     this._state.stream.destroy(err)
     this.emit('close')
   }
@@ -206,7 +213,7 @@ class Channel extends EventEmitter {
       this._state.incoming = {methodFrame, headerFrame: undefined, chunks: undefined, received: 0}
     } else if (methodFrame.fullName === 'basic.get-empty') {
       // @ts-ignore special case since basic.get-empty is a valid response for basic.get
-      this._resolveRPC('basic.get-ok', undefined)
+      this._handleRPC('basic.get-ok', undefined)
     } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.fullName === 'basic.ack') {
       const params: Required<MethodParams['basic.ack']> = methodFrame.params as any
       if (params.multiple) {
@@ -249,16 +256,9 @@ class Channel extends EventEmitter {
       setImmediate(() => {
         this.emit('basic.cancel', params.consumerTag, new AMQPError('CANCEL_FORCED', 'cancelled by server'))
       })
-    } else if (methodFrame.fullName === 'channel.close') {
-      const err = new AMQPChannelError(methodFrame.params)
-      this._rejectCallback(SPEC.getFullName(methodFrame.params.classId, methodFrame.params.methodId), err)
-      this._clear()
-      this._conn._writeMethod(methodFrame.channelId, 'channel.close-ok', undefined)
-      this._conn._state.leased.delete(this.id)
-      this._conn._checkEmpty()
     //} else if (methodFrame.fullName === 'channel.flow') unsupported; https://blog.rabbitmq.com/posts/2014/04/breaking-things-with-rabbitmq-3-3
     } else {
-      this._resolveRPC(methodFrame.fullName, methodFrame.params)
+      this._handleRPC(methodFrame.fullName, methodFrame.params)
     }
   }
 
@@ -321,7 +321,7 @@ class Channel extends EventEmitter {
           this.emit('basic.return', uncastMessage) // ReturnedMessage
         })
       } else if (methodFrame.fullName === 'basic.get-ok') {
-        this._resolveRPC(methodFrame.fullName, uncastMessage) // SyncMessage
+        this._handleRPC(methodFrame.fullName, uncastMessage) // SyncMessage
       }
     }
   }

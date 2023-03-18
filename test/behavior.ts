@@ -231,14 +231,11 @@ test('handles channel errors', async (t) => {
 
   const ch = await rabbit.acquire()
   t.pass('got channel')
-  try {
-    await ch.queueDeclare({passive: true, queue})
-  } catch (err) {
-    t.is(err.code, 'NOT_FOUND',
-      'caught channel error')
-    t.is(ch.active, false,
-      'channel is closed')
-  }
+  const err = await ch.queueDeclare({passive: true, queue}).catch(err => err)
+  t.is(err.code, 'NOT_FOUND',
+    'caught channel error')
+  t.is(ch.active, false,
+    'channel is closed')
 
   await rabbit.close()
 })
@@ -302,11 +299,36 @@ test('handles encoder errors', async (t) => {
   const ch = await rabbit.acquire()
 
   t.is(ch.id, 1, 'got a channel')
-  const emptyParams: any = {}
-  const err = await ch.basicCancel(emptyParams).catch(err => err)
-  t.is(err.message, 'basic.cancel consumerTag (a required param) is undefined')
+  const errs = await Promise.all([
+    ch.basicCancel({} as any).catch(err => err), // the bad one
+    ch.queueDeclare({exclusive: true}).catch(err => err), // this will never be sent
+    expectEvent(ch, 'close'),
+  ])
+  t.is(errs[0].message, 'basic.cancel consumerTag (a required param) is undefined')
+  t.is(errs[1].code, 'CH_CLOSE', 'buffered RPC is rejected')
 
-  await expectEvent(ch, 'close')
+  const other = await rabbit.acquire()
+  t.is(other.id, ch.id,
+    'created a new channel with the same id (old channel was properly closed)')
+
+  await other.close()
+  await rabbit.close()
+})
+
+test('handles encoder errors (while closing)', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const ch = await rabbit.acquire()
+
+  t.is(ch.id, 1, 'got a channel')
+  const errs = await Promise.all([
+    ch.basicCancel({} as any).catch(err => err), // the bad one
+    ch.queueDeclare({exclusive: true}).catch(err => err), // this will never be sent
+    ch.close(), // <-- new
+    expectEvent(ch, 'close'),
+  ])
+  t.is(errs[0].message, 'basic.cancel consumerTag (a required param) is undefined')
+  t.is(errs[1].code, 'CH_CLOSE', 'buffered RPC is rejected')
+
   const other = await rabbit.acquire()
   t.is(other.id, ch.id,
     'created a new channel with the same id (old channel was properly closed)')
