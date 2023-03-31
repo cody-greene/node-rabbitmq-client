@@ -62,6 +62,11 @@ class Connection extends EventEmitter {
   _state: {
     channelMax: number,
     frameMax: number,
+    heartbeatTimer?: NodeJS.Timer,
+    /** Received data since last heartbeat */
+    hasRead?: boolean,
+    /** Sent data since last heartbeat */
+    hasWrite?: boolean,
     hostIndex: number,
     retryCount: number,
     retryTimer?: NodeJS.Timeout,
@@ -153,6 +158,9 @@ class Connection extends EventEmitter {
     this._checkEmpty()
     // wait for all channels to close
     await this._state.onEmpty.promise
+
+    clearInterval(this._state.heartbeatTimer)
+    this._state.heartbeatTimer = undefined
 
     // might have transitioned to CLOSED while waiting for channels
     if (this._socket.writable) {
@@ -295,9 +303,6 @@ class Connection extends EventEmitter {
       }, this._opt.connectionTimeout)
     }
 
-    socket.on('timeout', () => {
-      socket.destroy(new AMQPConnectionError('SOCKET_TIMEOUT', 'socket timed out'))
-    })
     socket.on('error', err => {
       connectionError = connectionError || err
     })
@@ -321,6 +326,12 @@ class Connection extends EventEmitter {
           this.emit('error', connectionError)
       }
     })
+
+    const ogwrite = socket.write
+    socket.write = (...args) => {
+      this._state.hasWrite = true
+      return ogwrite.apply(socket, args as any)
+    }
 
     const readerLoop = async () => {
       try {
@@ -390,7 +401,25 @@ class Connection extends EventEmitter {
     await readFrame('connection.open-ok')
 
     // create heartbeat timeout, or disable when 0
-    this._socket.setTimeout(heartbeat * 1250)
+    if (heartbeat > 0) {
+      let miss = 0
+      this._state.hasWrite = this._state.hasRead = false
+      this._state.heartbeatTimer = setInterval(() => {
+        if (!this._state.hasRead) {
+          if (++miss >= 4)
+            this._socket.destroy(new AMQPConnectionError('SOCKET_TIMEOUT', 'socket timed out (no heartbeat)'))
+        } else {
+          this._state.hasRead = false
+          miss = 0
+        }
+        if (!this._state.hasWrite) {
+          // if connection.blocked then heartbeat monitoring is disabled
+          if (this._socket.writable && !this._socket.writableCorked)
+            this._socket.write(codec.HEARTBEAT_FRAME)
+        }
+        this._state.hasWrite = false
+      }, Math.ceil(heartbeat * 1000 / 2))
+    }
 
     this._state.readyState = READY_STATE.OPEN
     this._state.retryCount = 1
@@ -409,11 +438,11 @@ class Connection extends EventEmitter {
 
   /** @internal */
   private _handleChunk(evt: DataFrame): void {
+    this._state.hasRead = true
     let ch: Channel|undefined
     if (evt) {
       if (evt.type === 'heartbeat') {
-        // if connection.blocked then heartbeat monitoring is disabled; don't respond
-        if (!this._socket.writableCorked) this._socket.write(codec.HEARTBEAT_FRAME)
+        // still alive
       } else if (evt.type === 'method') {
         switch (evt.fullName) {
           case 'connection.close':
@@ -473,6 +502,8 @@ class Connection extends EventEmitter {
     if (this._state.connectionTimer)
       clearTimeout(this._state.connectionTimer)
     this._state.connectionTimer = undefined
+    clearInterval(this._state.heartbeatTimer)
+    this._state.heartbeatTimer = undefined
   }
 
   /** @internal */

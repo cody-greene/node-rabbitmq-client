@@ -2,7 +2,7 @@ import test from 'tape'
 import Connection, {AsyncMessage} from '../src'
 import {createServer} from 'node:net'
 import {expectEvent, createDeferred, Deferred} from '../src/util'
-import {MethodFrame} from '../src/types'
+import {MethodFrame, DataFrame} from '../src/types'
 import {useFakeServer, sleep} from './util'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
@@ -370,6 +370,48 @@ test('[opt.heartbeat] creates a timeout to detect a dead socket', async (t) => {
   const err = await expectEvent(rabbit, 'error')
   t.is(err.code, 'SOCKET_TIMEOUT',
     'got socket timeout error')
+
+  await rabbit.close()
+})
+
+test('[opt.heartbeat] regularly sends a heartbeat frame on its own', async (t) => {
+  t.plan(6)
+
+  const [port, server] = await useFakeServer(async (socket, next) => {
+    server.close()
+    let frame
+
+    // S:connection.start
+    socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.start-ok')
+
+    // S:connection.tune
+    socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.tune-ok')
+
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.open')
+    // S:connection.open-ok
+    socket.write('AQAAAAAABQAKACkAzg', 'base64')
+
+    frame = await next() as DataFrame
+    t.is(frame.type, 'heartbeat', 'got heartbeat from client')
+
+    // S:connection.close
+    socket.end('AQAAAAAAIwAKADIBQBhDT05ORUNUSU9OX0ZPUkNFRCAtIHRlc3QAAAAAzg', 'base64')
+    frame = await next() as MethodFrame
+    t.is(frame.fullName, 'connection.close-ok', 'client confirmed forced close')
+  })
+
+  const rabbit = new Connection({
+    port: port,
+    heartbeat: 1
+  })
+
+  const err = await expectEvent(rabbit, 'error')
+  t.is(err.code, 'CONNECTION_FORCED')
 
   await rabbit.close()
 })
