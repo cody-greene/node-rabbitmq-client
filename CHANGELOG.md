@@ -1,3 +1,6 @@
+# v3.3.2
+- fix: better heartbeats [#13](https://github.com/cody-greene/node-rabbitmq-client/pull/13)
+
 # v3.3.1
 - fix: out-of-order RPCs [#10](https://github.com/cody-greene/node-rabbitmq-client/pull/10)
 
