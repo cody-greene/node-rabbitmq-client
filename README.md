@@ -1,3 +1,5 @@
+[![npm version](https://badge.fury.io/js/rabbitmq-client.svg)](https://badge.fury.io/js/rabbitmq-client)
+
 ## RabbitMQ Client
 
 https://github.com/cody-greene/node-rabbitmq-client
