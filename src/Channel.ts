@@ -1,15 +1,26 @@
 import {AMQPError, AMQPChannelError, AMQPConnectionError} from './exception'
-import {createDeferred, Deferred, EncoderStream} from './util'
-import type {AsyncMessage, BodyFrame, Envelope, HeaderFrame, MessageBody, MethodFrame, MethodParams, ReturnedMessage, SyncMessage, SyncMethods} from './types'
-import type Connection from './Connection'
+import {createDeferred, Deferred, EncoderStream, recaptureAndThrow} from './util'
+import type {Connection} from './Connection'
 import EventEmitter from 'node:events'
-import {genContentFrames, genMethodFrame} from './codec'
-import SPEC from './spec'
+import {
+  AsyncMessage,
+  BodyFrame,
+  Cmd,
+  Envelope,
+  FrameType,
+  HeaderFrame,
+  MessageBody,
+  MethodFrame,
+  MethodParams,
+  ReplyCode,
+  ReturnedMessage,
+  SyncMessage,
+  genContentFrames,
+  genFrame,
+} from './codec'
 
 enum CH_MODE {NORMAL, TRANSACTION, CONFIRM}
 
-/** For basic.consume */
-export type ConsumerCallback = (msg: AsyncMessage) => void
 /**
  * AMQP messages consist of a MethodFrame followed by a HeaderFrame and a
  * number of BodyFrames. The body is chunked, limited by a max-frame-size
@@ -23,27 +34,72 @@ interface AMQPMessage {
   chunks?: Buffer[]
 }
 
-declare interface Channel {
-  /** The specified consumer is stopped by the server. The error param
+export declare interface Channel {
+  /** The specified consumer was stopped by the server. The error param
    * describes the reason for the cancellation. */
   on(name: 'basic.cancel', cb: (consumerTag: string, err: any) => void): this;
-  /** This method returns an undeliverable message that was published with the
-   * "immediate" flag set, or an unroutable message published with the
-   * "mandatory" flag set. The reply code and text provide information about
-   * the reason that the message was undeliverable. */
+  /** An undeliverable message was published with the "immediate" flag set, or
+   * an unroutable message published with the "mandatory" flag set. The reply
+   * code and text provide information about the reason that the message was
+   * undeliverable.
+   * {@label BASIC_RETURN} */
   on(name: 'basic.return', cb: (msg: ReturnedMessage) => void): this;
+  /** The channel was closed, because you closed it, or due to some error */
   on(name: 'close', cb: () => void): this;
 }
 
-/** AMQP is a multi-channelled protocol. Channels provide a way to multiplex a
+/**
+ * @see {@link Connection#acquire | Connection#acquire()}
+ * @see {@link Connection#createConsumer | Connection#createConsumer()}
+ * @see {@link Connection#createPublisher | Connection#createPublisher()}
+ * @see {@link Connection#createRPCClient | Connection#createRPCClient()}
+ *
+ * A raw Channel can be acquired from your Connection, but please consider
+ * using a higher level abstraction like a {@link Consumer} or
+ * {@link Publisher} for most cases.
+ *
+ * AMQP is a multi-channelled protocol. Channels provide a way to multiplex a
  * heavyweight TCP/IP connection into several light weight connections. This
  * makes the protocol more “firewall friendly” since port usage is predictable.
  * It also means that traffic shaping and other network QoS features can be
  * easily employed. Channels are independent of each other and can perform
  * different functions simultaneously with other channels, the available
  * bandwidth being shared between the concurrent activities.
- * See {@link Connection.acquire} */
-class Channel extends EventEmitter {
+ *
+ * @example
+ * ```
+ * const rabbit = new Connection()
+ *
+ * // Will wait for the connection to establish and then create a Channel
+ * const ch = await rabbit.acquire()
+ *
+ * // Channels can emit some events too (see documentation)
+ * ch.on('close', () => {
+ *   console.log('channel was closed')
+ * })
+ *
+ * // Create a queue for the duration of this connection
+ * await ch.queueDeclare({queue: 'my-queue'})
+ *
+ * // Enable publisher acknowledgements
+ * await ch.confirmSelect()
+ *
+ * const data = {title: 'just some object'}
+ *
+ * // Resolves when the data has been flushed through the socket or if
+ * // ch.confirmSelect() was called: will wait for an acknowledgement
+ * await ch.basicPublish({routingKey: 'my-queue'}, data)
+ *
+ * const msg = ch.basicGet('my-queue')
+ * console.log(msg)
+ *
+ * await ch.queueDelete('my-queue')
+ *
+ * // It's your responsibility to close any acquired channels
+ * await ch.close()
+ * ```
+ */
+export class Channel extends EventEmitter {
   /** @internal */
   private _conn: Connection
   readonly id: number
@@ -56,11 +112,11 @@ class Channel extends EventEmitter {
     unconfirmed: Map<number, Deferred<void>>
     mode: CH_MODE
     maxFrameSize: number
-    rpc?: [dfd: Deferred<any>, fullName: string]
-    rpcBuffer: Array<readonly [dfd: Deferred<any>, fullName: string, it: Generator<Buffer, void>]>
+    rpc?: [dfd: Deferred<any>, req: Cmd, res: Cmd]
+    rpcBuffer: Array<readonly [dfd: Deferred<any>, req: Cmd, res: Cmd, it: Generator<Buffer, void>]>
     cleared: boolean,
     /** For tracking consumers created with basic.consume */
-    consumers: Map<string, ConsumerCallback>
+    consumers: Map<string, (msg: AsyncMessage) => void>
     incoming?: AMQPMessage
     deliveryCount: number
     /**
@@ -119,9 +175,12 @@ class Channel extends EventEmitter {
       }
       // send channel.close
       const dfd = createDeferred()
-      this._state.rpc = [dfd, 'channel.close-ok']
-      this._conn._writeMethod(this.id, 'channel.close',
-        {replyCode: 200, classId: 0, methodId: 0})
+      this._state.rpc = [dfd, Cmd.ChannelClose, Cmd.ChannelCloseOK]
+      this._conn._writeMethod({
+        type: FrameType.METHOD,
+        channelId: this.id,
+        methodId: Cmd.ChannelClose,
+        params: {replyCode: 200, replyText: '', methodId: 0}})
       await dfd.promise
     } catch (err) {
       // ignored; if write fails because the connection closed then this is
@@ -132,18 +191,25 @@ class Channel extends EventEmitter {
   }
 
   /** @internal */
-  _handleRPC<T extends keyof MethodParams>(fullName: T, params: any) {
-    if (fullName === 'channel.close') {
+  _handleRPC(methodId: Cmd, data: any) {
+    if (methodId === Cmd.ChannelClose) {
+      const params: MethodParams[Cmd.ChannelClose] = data
       this.active = false
-      this._conn._writeMethod(this.id, 'channel.close-ok', undefined)
-      const err = new AMQPChannelError(params)
-      const badName = SPEC.getFullName(params.classId, params.methodId)
-      if (badName === 'basic.publish' && this._state.unconfirmed.size > 0) {
+      this._conn._writeMethod({
+        type: FrameType.METHOD,
+        channelId: this.id,
+        methodId: Cmd.ChannelCloseOK,
+        params: undefined})
+      const strcode = ReplyCode[params.replyCode] || String(params.replyCode)
+      const msg = Cmd[params.methodId] + ': ' + params.replyText
+      const err = new AMQPChannelError(strcode, msg)
+      //const badName = SPEC.getFullName(params.classId, params.methodId)
+      if (params.methodId === Cmd.BasicPublish && this._state.unconfirmed.size > 0) {
         // reject first unconfirmed message
         const [tag, dfd] = this._state.unconfirmed.entries().next().value
         this._state.unconfirmed.delete(tag)
         dfd.reject(err)
-      } else if (this._state.rpc && (badName + '-ok') === this._state.rpc[1]) {
+      } else if (this._state.rpc && params.methodId === this._state.rpc[1]) {
         // or reject the rpc
         const [dfd] = this._state.rpc
         this._state.rpc = undefined
@@ -157,15 +223,15 @@ class Channel extends EventEmitter {
     }
     if (!this._state.rpc) {
       throw new AMQPConnectionError('UNEXPECTED_FRAME',
-        `client received unexpected method ch${this.id}:${fullName} ${JSON.stringify(params)}`)
+        `client received unexpected method ch${this.id}:${Cmd[methodId]} ${JSON.stringify(data)}`)
     }
-    const [dfd, expectedName] = this._state.rpc
+    const [dfd, , expectedId] = this._state.rpc
     this._state.rpc = undefined
-    if (expectedName !== fullName) {
+    if (expectedId !== methodId) {
       throw new AMQPConnectionError('UNEXPECTED_FRAME',
-        `client received unexpected method ch${this.id}:${fullName} ${JSON.stringify(params)}`)
+        `client received unexpected method ch${this.id}:${Cmd[methodId]} ${JSON.stringify(data)}`)
     }
-    dfd.resolve(params)
+    dfd.resolve(data)
     if (this._state.stream.writable) {
       if (!this.active)
         this._state.stream.end()
@@ -209,13 +275,12 @@ class Channel extends EventEmitter {
       throw new AMQPConnectionError('UNEXPECTED_FRAME',
         'unexpected method frame, already awaiting header/body; this is a bug')
     }
-    if (['basic.deliver', 'basic.return', 'basic.get-ok'].includes(methodFrame.fullName)) {
+    if ([Cmd.BasicDeliver, Cmd.BasicReturn, Cmd.BasicGetOK].includes(methodFrame.methodId)) {
       this._state.incoming = {methodFrame, headerFrame: undefined, chunks: undefined, received: 0}
-    } else if (methodFrame.fullName === 'basic.get-empty') {
-      // @ts-ignore special case since basic.get-empty is a valid response for basic.get
-      this._handleRPC('basic.get-ok', undefined)
-    } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.fullName === 'basic.ack') {
-      const params: Required<MethodParams['basic.ack']> = methodFrame.params as any
+    } else if (methodFrame.methodId === Cmd.BasicGetEmpty) {
+      this._handleRPC(Cmd.BasicGetOK, undefined)
+    } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.methodId === Cmd.BasicAck) {
+      const params = methodFrame.params as Required<MethodParams[Cmd.BasicAck]>
       if (params.multiple) {
         for (const [tag, dfd] of this._state.unconfirmed.entries()) {
           if (tag > params.deliveryTag)
@@ -232,8 +297,8 @@ class Channel extends EventEmitter {
           //TODO channel error; PRECONDITION_FAILED, unexpected ack
         }
       }
-    } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.fullName === 'basic.nack') {
-      const params: Required<MethodParams['basic.nack']> = methodFrame.params as any
+    } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.methodId === Cmd.BasicNack) {
+      const params = methodFrame.params as Required<MethodParams[Cmd.BasicNack]>
       if (params.multiple) {
         for (const [tag, dfd] of this._state.unconfirmed.entries()) {
           if (tag > params.deliveryTag)
@@ -250,15 +315,15 @@ class Channel extends EventEmitter {
           //TODO channel error; PRECONDITION_FAILED, unexpected nack
         }
       }
-    } else if (methodFrame.fullName === 'basic.cancel') {
-      const params: Required<MethodParams['basic.cancel']> = methodFrame.params as any
+    } else if (methodFrame.methodId === Cmd.BasicCancel) {
+      const params = methodFrame.params as Required<MethodParams[Cmd.BasicCancel]>
       this._state.consumers.delete(params.consumerTag)
       setImmediate(() => {
         this.emit('basic.cancel', params.consumerTag, new AMQPError('CANCEL_FORCED', 'cancelled by server'))
       })
     //} else if (methodFrame.fullName === 'channel.flow') unsupported; https://blog.rabbitmq.com/posts/2014/04/breaking-things-with-rabbitmq-3-3
     } else {
-      this._handleRPC(methodFrame.fullName, methodFrame.params)
+      this._handleRPC(methodFrame.methodId, methodFrame.params)
     }
   }
 
@@ -301,7 +366,7 @@ class Channel extends EventEmitter {
         body
       }
 
-      if (methodFrame.fullName === 'basic.deliver') {
+      if (methodFrame.methodId === Cmd.BasicDeliver) {
         const message: AsyncMessage = uncastMessage as any
         // setImmediate allows basicConsume to resolve first if
         // basic.consume-ok & basic.deliver are received in the same chunk.
@@ -316,12 +381,12 @@ class Channel extends EventEmitter {
             handler(message)
           }
         })
-      } else if (methodFrame.fullName === 'basic.return') {
+      } else if (methodFrame.methodId === Cmd.BasicReturn) {
         setImmediate(() => {
           this.emit('basic.return', uncastMessage) // ReturnedMessage
         })
-      } else if (methodFrame.fullName === 'basic.get-ok') {
-        this._handleRPC(methodFrame.fullName, uncastMessage) // SyncMessage
+      } else if (methodFrame.methodId === Cmd.BasicGetOK) {
+        this._handleRPC(Cmd.BasicGetOK, uncastMessage) // SyncMessage
       }
     }
   }
@@ -343,23 +408,26 @@ class Channel extends EventEmitter {
    * C:queue.declare
    * S:queue.declare
    **/
-  _invoke<T extends SyncMethods>(fullName: T, params: MethodParams[T]): Promise<any> {
-    if (!this.active) return activeCheckPromise()
+  _invoke<P extends Cmd>(req: P, res: Cmd, params: MethodParams[P]): Promise<any> {
+    if (!this.active) return Promise.reject(new AMQPChannelError('CH_CLOSE', 'channel is closed'))
     const dfd = createDeferred()
-    const it = genMethodFrame(this.id, fullName, params)
-    const rpc = [dfd, fullName + '-ok', it] as const
+    const it = genFrame({
+      type: FrameType.METHOD,
+      channelId: this.id,
+      methodId: req,
+      params: params} as MethodFrame)
+    const rpc = [dfd, req, res, it] as const
     if (this._state.rpc)
       this._state.rpcBuffer.push(rpc)
     else
       this._rpcNext(rpc)
-    return dfd.promise
+    return dfd.promise.catch(recaptureAndThrow)
   }
 
   /** @internal
    * Start the next RPC */
-  _rpcNext([dfd, fullName, it]: typeof this._state.rpcBuffer[number]) {
-    //const [dfd, fullName, it] = this._state.rpcBuffer.shift()!
-    this._state.rpc = [dfd, fullName]
+  _rpcNext([dfd, req, res, it]: typeof this._state.rpcBuffer[number]) {
+    this._state.rpc = [dfd, req, res]
     this._state.stream.write(it, (err) => {
       if (err) {
         this._state.rpc = undefined
@@ -369,12 +437,18 @@ class Channel extends EventEmitter {
   }
 
   /** @internal */
-  _invokeNowait<T extends keyof MethodParams>(fullName: T, params: MethodParams[T]): void {
+  _invokeNowait<T extends Cmd>(methodId: T, params: MethodParams[T]): void {
     if (!this.active)
       throw new AMQPChannelError('CH_CLOSE', 'channel is closed')
-    this._state.stream.write(genMethodFrame(this.id, fullName, params), (err) => {
+    const frame = {
+      type: FrameType.METHOD,
+      channelId: this.id,
+      methodId: methodId,
+      params: params
+    }
+    this._state.stream.write(genFrame(frame as MethodFrame), (err) => {
       if (err) {
-        err.message += '; ' + fullName
+        err.message += '; ' + Cmd[methodId]
         this._conn.emit('error', err)
       }
     })
@@ -382,9 +456,7 @@ class Channel extends EventEmitter {
 
   /**
    * This method publishes a message to a specific exchange. The message will
-   * be routed to queues as defined by the exchange configuration and
-   * distributed to any active consumers when the transaction, if any, is
-   * committed.
+   * be routed to queues as defined by the exchange configuration.
    *
    * If the body is a string then it will be serialized with
    * contentType='text/plain'. If body is an object then it will be serialized
@@ -393,22 +465,23 @@ class Channel extends EventEmitter {
    * If publisher-confirms are enabled, then this will resolve when the
    * acknowledgement is received. Otherwise this will resolve after writing to
    * the TCP socket, which is usually immediate. Note that if you keep
-   * publishing while the connection is blocked (see {@link Connection.on |
-   * Connection.on('connection.blocked')}) then the TCP socket buffer will
-   * eventually fill and this method will no longer resolve immediately.
-   *
-   * @param params A queue name for direct routing, as a string, or an Envelope
-   * object.
-   */
+   * publishing while the connection is blocked (see
+   * {@link Connection#on:BLOCKED | Connection#on('connection.blocked')}) then
+   * the TCP socket buffer will eventually fill and this method will no longer
+   * resolve immediately. */
+  async basicPublish(envelope: Envelope, body: MessageBody): Promise<void>
+  /** Send directly to a queue. Same as `basicPublish({routingKey: queue}, body)` */
+  async basicPublish(queue: string, body: MessageBody): Promise<void>
+  /** @ignore */
+  async basicPublish(envelope: string|Envelope, body: MessageBody): Promise<void>
   async basicPublish(params: string|Envelope, body: MessageBody): Promise<void> {
-    if (!this.active) return activeCheckPromise()
+    if (!this.active) return Promise.reject(new AMQPChannelError('CH_CLOSE', 'channel is closed'))
     if (typeof params == 'string') {
       params = {routingKey: params}
     }
-    params = Object.assign({
-      deliveryMode: (params.durable || params.deliveryMode === 2) ? 2 : 1,
-      timestamp: Math.floor(Date.now() / 1000),
-    }, params)
+    params = Object.assign({timestamp: Math.floor(Date.now() / 1000)}, params)
+    params.deliveryMode = (params.durable || params.deliveryMode === 2) ? 2 : 1
+    params.rsvp1 = 0
     if (typeof body == 'string') {
       body = Buffer.from(body, 'utf8')
       params.contentType = 'text/plain'
@@ -430,104 +503,121 @@ class Channel extends EventEmitter {
   }
 
   /**
-   * This method asks the server to start a "consumer", which is a transient
-   * request for messages from a specific queue. Consumers last as long as the
-   * channel they were declared on, or until the client cancels them.
-   */
-  async basicConsume(params: MethodParams['basic.consume'], fn: ConsumerCallback): Promise<Required<MethodParams['basic.consume-ok']>> {
-    const data = await this._invoke('basic.consume', {...params, nowait: false})
-    const consumerTag = params.consumerTag || data.consumerTag
-    this._state.consumers.set(consumerTag, fn)
+   * This is a low-level method; consider using {@link Connection#createConsumer | Connection#createConsumer()} instead.
+   *
+   * Begin consuming messages from a queue. Consumers last as long as the
+   * channel they were declared on, or until the client cancels them. The
+   * callback `cb(msg)` is called for each incoming message. You must call
+   * {@link Channel#basicAck} to complete the delivery, usually after you've
+   * finished some task. */
+  async basicConsume(params: MethodParams[Cmd.BasicConsume], cb: (msg: AsyncMessage) => void): Promise<MethodParams[Cmd.BasicConsumeOK]> {
+    const data = await this._invoke(Cmd.BasicConsume, Cmd.BasicConsumeOK, {...params, rsvp1: 0, nowait: false})
+    const consumerTag = data.consumerTag
+    this._state.consumers.set(consumerTag, cb)
     return {consumerTag}
   }
 
-  /** End a queue consumer. */
-  async basicCancel(params: string|MethodParams['basic.cancel']): Promise<Required<MethodParams['basic.cancel-ok']>> {
+  /** Stop a consumer. */
+  basicCancel(consumerTag: string): Promise<MethodParams[Cmd.BasicCancelOK]>
+  basicCancel(params: MethodParams[Cmd.BasicCancel]): Promise<MethodParams[Cmd.BasicCancelOK]>
+  /** @ignore */
+  basicCancel(params: string|MethodParams[Cmd.BasicCancel]): Promise<MethodParams[Cmd.BasicCancelOK]>
+  async basicCancel(params: string|MethodParams[Cmd.BasicCancel]): Promise<MethodParams[Cmd.BasicCancelOK]> {
     if (typeof params == 'string') {
       params = {consumerTag: params}
     }
+    if (params.consumerTag == null)
+      throw new TypeError('consumerTag is undefined; expected a string')
     // note: server may send a few messages before basic.cancel-ok is returned
-    const res = await this._invoke('basic.cancel', {...params, nowait: false})
+    const res = await this._invoke(Cmd.BasicCancel, Cmd.BasicCancelOK, {...params, nowait: false})
     this._state.consumers.delete(params.consumerTag)
     return res
   }
 
   /**
-   * This method sets the channel to use publisher acknowledgements. The client
-   * can only use this method on a non-transactional channel.
+   * This method sets the channel to use publisher acknowledgements.
    * https://www.rabbitmq.com/confirms.html#publisher-confirms
    */
   async confirmSelect(): Promise<void> {
-    await this._invoke('confirm.select', {})
+    await this._invoke(Cmd.ConfirmSelect, Cmd.ConfirmSelectOK, {nowait: false})
     this._state.mode = CH_MODE.CONFIRM
   }
 
   /**
-   * This method sets the channel to use standard transactions. The client must
-   * use this method at least once on a channel before using the Commit or
-   * Rollback methods.
+   * Don't use this unless you know what you're doing. This method is provided
+   * for the sake of completeness, but you should use `confirmSelect()` instead.
+   *
+   * Sets the channel to use standard transactions. The client must use this
+   * method at least once on a channel before using the Commit or Rollback
+   * methods. Mutually exclusive with confirm mode.
    */
   async txSelect(): Promise<void> {
-    await this._invoke('tx.select', undefined)
+    await this._invoke(Cmd.TxSelect, Cmd.TxSelectOK, undefined)
     this._state.mode = CH_MODE.TRANSACTION
   }
 
-  /**
-   * Declare queue, create if needed.
-   * If params is undefined then a random queue name is generated (see the
-   * return value). If params is a string then it will be used as the queue
-   * name.
-   */
-  async queueDeclare(params?: MethodParams['queue.declare']): Promise<MethodParams['queue.declare-ok']> {
-    if (params == null) {
-      params = {}
+  /** Declare queue, create if needed.  If `queue` empty or undefined then a
+   * random queue name is generated (see the return value). */
+  queueDeclare(params: MethodParams[Cmd.QueueDeclare]): Promise<MethodParams[Cmd.QueueDeclareOK]>
+  queueDeclare(queue?: string): Promise<MethodParams[Cmd.QueueDeclareOK]>
+  /** @ignore */
+  queueDeclare(params?: string|MethodParams[Cmd.QueueDeclare]): Promise<MethodParams[Cmd.QueueDeclareOK]>
+  queueDeclare(params: string|MethodParams[Cmd.QueueDeclare] = ''): Promise<MethodParams[Cmd.QueueDeclareOK]> {
+    if (typeof params == 'string') {
+      params = {queue: params}
     }
-    const result = await this._invoke('queue.declare', {...params, nowait: false})
-    if (result == null) {
-      // result will be undefined when nowait=true
-      return {queue: params.queue!, messageCount: 0, consumerCount: 0}
-    }
-    return result
+    return this._invoke(Cmd.QueueDeclare, Cmd.QueueDeclareOK, {...params, rsvp1: 0, nowait: false})
   }
-
   /** Acknowledge one or more messages. */
-  basicAck(params: MethodParams['basic.ack']): void {
-    return this._invokeNowait('basic.ack', params)
+  basicAck(params: MethodParams[Cmd.BasicAck]): void {
+    return this._invokeNowait(Cmd.BasicAck, params)
   }
   /** Request a single message from a queue */
-  basicGet(params: MethodParams['basic.get']): Promise<undefined|SyncMessage> {
-    return this._invoke('basic.get', params)
+  basicGet(params: MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage> {
+    return this._invoke(Cmd.BasicGet, Cmd.BasicGetOK, {...params, rsvp1: 0})
   }
   /** Reject one or more incoming messages. */
-  basicNack(params: MethodParams['basic.nack']): void {
-    return this._invokeNowait('basic.nack', params)
+  basicNack(params: MethodParams[Cmd.BasicNack]): void {
+    this._invokeNowait(Cmd.BasicNack, {...params, requeue: typeof params.requeue == 'undefined' ? true : params.requeue})
   }
   /** Specify quality of service. */
-  basicQos(params: MethodParams['basic.qos']): Promise<Required<MethodParams['basic.qos-ok']>> {
-    return this._invoke('basic.qos', params)
+  async basicQos(params: MethodParams[Cmd.BasicQos]): Promise<void> {
+    await this._invoke(Cmd.BasicQos, Cmd.BasicQosOK, params)
   }
   /**
    * This method asks the server to redeliver all unacknowledged messages on a
    * specified channel. Zero or more messages may be redelivered.
    */
-  basicRecover(params: MethodParams['basic.recover']): Promise<Required<MethodParams['basic.recover-ok']>> {
-    return this._invoke('basic.recover', params)
+  async basicRecover(params: MethodParams[Cmd.BasicRecover]): Promise<void> {
+    await this._invoke(Cmd.BasicRecover, Cmd.BasicRecoverOK, params)
   }
   /** Bind exchange to an exchange. */
-  exchangeBind(params: MethodParams['exchange.bind']): Promise<Required<MethodParams['exchange.bind-ok']>> {
-    return this._invoke('exchange.bind', {...params, nowait: false})
+  async exchangeBind(params: MethodParams[Cmd.ExchangeBind]): Promise<void> {
+    if (params.destination == null)
+      throw new TypeError('destination is undefined; expected a string')
+    if (params.source == null)
+      throw new TypeError('source is undefined; expected a string')
+    await this._invoke(Cmd.ExchangeBind, Cmd.ExchangeBindOK, {...params, rsvp1: 0, nowait: false})
   }
   /** Verify exchange exists, create if needed. */
-  exchangeDeclare(params: MethodParams['exchange.declare']): Promise<Required<MethodParams['exchange.declare-ok']>> {
-    return this._invoke('exchange.declare', {...params, nowait: false})
+  async exchangeDeclare(params: MethodParams[Cmd.ExchangeDeclare]): Promise<void> {
+    if (params.exchange == null)
+      throw new TypeError('exchange is undefined; expected a string')
+    await this._invoke(Cmd.ExchangeDeclare, Cmd.ExchangeDeclareOK, {...params, type: params.type || 'direct', rsvp1: 0, nowait: false})
   }
   /** Delete an exchange. */
-  exchangeDelete(params: MethodParams['exchange.delete']): Promise<Required<MethodParams['exchange.delete-ok']>> {
-    return this._invoke('exchange.delete', {...params, nowait: false})
+  async exchangeDelete(params: MethodParams[Cmd.ExchangeDelete]): Promise<void> {
+    if (params.exchange == null)
+      throw new TypeError('exchange is undefined; expected a string')
+    await this._invoke(Cmd.ExchangeDelete, Cmd.ExchangeDeleteOK, {...params, rsvp1: 0, nowait: false})
   }
   /** Unbind an exchange from an exchange. */
-  exchangeUnbind(params: MethodParams['exchange.unbind']): Promise<Required<MethodParams['exchange.unbind-ok']>> {
-    return this._invoke('exchange.unbind', {...params, nowait: false})
+  async exchangeUnbind(params: MethodParams[Cmd.ExchangeUnbind]): Promise<void> {
+    if (params.destination == null)
+      throw new TypeError('destination is undefined; expected a string')
+    if (params.source == null)
+      throw new TypeError('source is undefined; expected a string')
+    await this._invoke(Cmd.ExchangeUnbind, Cmd.ExchangeUnbindOK, {...params, rsvp1: 0, nowait: false})
   }
   /**
    * This method binds a queue to an exchange. Until a queue is bound it will
@@ -535,35 +625,51 @@ class Channel extends EventEmitter {
    * queues are bound to a direct exchange and subscription queues are bound to
    * a topic exchange.
    */
-  queueBind(params: MethodParams['queue.bind']): Promise<Required<MethodParams['queue.bind-ok']>> {
-    return this._invoke('queue.bind', {...params, nowait: false})
+  async queueBind(params: MethodParams[Cmd.QueueBind]): Promise<void> {
+    if (params.exchange == null)
+      throw new TypeError('exchange is undefined; expected a string')
+    await this._invoke(Cmd.QueueBind, Cmd.QueueBindOK, {...params, nowait: false})
   }
-  /**
-   *  This method deletes a queue. When a queue is deleted any pending messages
-   *  are sent to a dead-letter queue if this is defined in the server
-   *  configuration, and all consumers on the queue are cancelled.
-   */
-  queueDelete(params: MethodParams['queue.delete']): Promise<Required<MethodParams['queue.delete-ok']>> {
-    return this._invoke('queue.delete', {...params, nowait: false})
+  /** This method deletes a queue. When a queue is deleted any pending messages
+   * are sent to a dead-letter queue if this is defined in the server
+   * configuration, and all consumers on the queue are cancelled. If `queue` is
+   * empty or undefined then the last declared queue on the channel is used. */
+  queueDelete(params: MethodParams[Cmd.QueueDelete]): Promise<MethodParams[Cmd.QueueDeleteOK]>
+  queueDelete(queue?: string): Promise<MethodParams[Cmd.QueueDeleteOK]>
+  /** @ignore */
+  queueDelete(params: string|MethodParams[Cmd.QueueDelete]): Promise<MethodParams[Cmd.QueueDeleteOK]>
+  queueDelete(params: string|MethodParams[Cmd.QueueDelete] = ''): Promise<MethodParams[Cmd.QueueDeleteOK]> {
+    if (typeof params == 'string') {
+      params = {queue: params}
+    }
+    return this._invoke(Cmd.QueueDelete, Cmd.QueueDeleteOK, {...params, rsvp1: 0, nowait: false})
   }
-  /**
-   * This method removes all messages from a queue which are not awaiting
-   * acknowledgment.
-   */
-  queuePurge(params: MethodParams['queue.purge']): Promise<Required<MethodParams['queue.purge-ok']>> {
-    return this._invoke('queue.purge', {...params, nowait: false})
+  /** Remove all messages from a queue which are not awaiting acknowledgment.
+   * If `queue` is empty or undefined then the last declared queue on the
+   * channel is used. */
+  queuePurge(queue?: string): Promise<MethodParams[Cmd.QueuePurgeOK]>
+  queuePurge(params: MethodParams[Cmd.QueuePurge]): Promise<MethodParams[Cmd.QueuePurgeOK]>
+  /** @ignore */
+  queuePurge(params: string|MethodParams[Cmd.QueuePurge]): Promise<MethodParams[Cmd.QueuePurgeOK]>
+  queuePurge(params: string|MethodParams[Cmd.QueuePurge] = ''): Promise<MethodParams[Cmd.QueuePurgeOK]> {
+    if (typeof params == 'string') {
+      params = {queue: params}
+    }
+    return this._invoke(Cmd.QueuePurge, Cmd.QueuePurgeOK, {queue: params.queue, rsvp1: 0, nowait: false})
   }
   /** Unbind a queue from an exchange. */
-  queueUnbind(params: MethodParams['queue.unbind']): Promise<Required<MethodParams['queue.unbind-ok']>> {
-    return this._invoke('queue.unbind', params)
+  async queueUnbind(params: MethodParams[Cmd.QueueUnbind]): Promise<void> {
+    if (params.exchange == null)
+      throw new TypeError('exchange is undefined; expected a string')
+    await this._invoke(Cmd.QueueUnbind, Cmd.QueueUnbindOK, {...params, rsvp1: 0})
   }
   /**
    * This method commits all message publications and acknowledgments performed
    * in the current transaction. A new transaction starts immediately after a
    * commit.
    */
-  txCommit(params: MethodParams['tx.commit']): Promise<Required<MethodParams['tx.commit-ok']>> {
-    return this._invoke('tx.commit', params)
+  async txCommit(): Promise<void> {
+    await this._invoke(Cmd.TxCommit, Cmd.TxCommitOK, undefined)
   }
   /**
    * This method abandons all message publications and acknowledgments
@@ -572,15 +678,7 @@ class Channel extends EventEmitter {
    * redelivered by rollback; if that is required an explicit recover call
    * should be issued.
    */
-  txRollback(params: MethodParams['tx.rollback']): Promise<Required<MethodParams['tx.rollback-ok']>> {
-    return this._invoke('tx.rollback', params)
+  async txRollback(): Promise<void> {
+    await this._invoke(Cmd.TxRollback, Cmd.TxRollbackOK, undefined)
   }
 }
-
-function activeCheckPromise() {
-  // This check is very important. The server will end the connection if we
-  // attempt to use a closed channel.
-  return Promise.reject(new AMQPChannelError('CH_CLOSE', 'channel is closed'))
-}
-
-export default Channel

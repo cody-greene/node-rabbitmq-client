@@ -1,0 +1,12 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "excludeExternals": true,
+  "includeVersion": false,
+  "githubPages": false,
+  "sidebarLinks": {
+    "View source on GitHub": "https://github.com/cody-greene/node-rabbitmq-client"
+  },
+  "out": "./docs",
+  "plugin": ["./src/typedoc-plugin-versions.ts"],
+  "tsconfig": "tsconfig.build.json"
+}

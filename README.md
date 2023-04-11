@@ -1,149 +1,195 @@
 [![npm version](https://badge.fury.io/js/rabbitmq-client.svg)](https://badge.fury.io/js/rabbitmq-client)
 
 ## RabbitMQ Client
-
-https://github.com/cody-greene/node-rabbitmq-client
-
-Node.js client library for [RabbitMQ](https://www.rabbitmq.com), a "message broker."
+Node.js client library for [RabbitMQ](https://www.rabbitmq.com/documentation.html). Publish
+messages, declare rules for routing those messages into queues, consume messages from queues.
 
 Why not amqplib?
 - No dependencies
-- Failed connections automatically reconnect
-- Optional higher-level consumer/publisher objects for even more robustness
+- Automatically re-connect, re-subscribe, or retry publishing
+- Optional higher-level Consumer/Publisher API for even more robustness
 - Written in typescript and published with heavily commented type definitions
 - [See here for full API documentation](http://cody-greene.github.io/node-rabbitmq-client)
-- Uses native Promises
 - Intuitive API with named parameters instead of positional
 - "x-arguments" like "x-message-ttl" don't have camelCase aliases
 
 ## Performance
-Performance is comparable to amqplib. See ./benchmark.ts for time to publish X messages in batches of Y:
-module          | total msg | batch sz | mean    | min | max | SD     | total time
-----------------|-----------|----------|---------|-----|-----|--------|-----------
-rabbitmq-client | 10000     | 500      | 115     | 32  | 231 | 60.272 | 2289ms
-amqplib         | 10000     | 500      | 124.25  | 24  | 240 | 62.302 | 2476ms
-rabbitmq-client | 10000     | 50       | 112.255 | 8   | 391 | 82.903 | 22350ms
-amqplib         | 10000     | 50       | 142.66  | 7   | 519 | 96.098 | 28428ms
+Performance is comparable to amqplib (see ./benchmark.ts). Time to publish 1
+million messages in batches of 50:
+```
+TOTAL (messages)=1_000_000
+BATCH_SIZE=50
 
-## Getting started
-```javascript
-import Connection from 'rabbitmq-client'
+time per batch (milliseconds) (transient queue)
+                 total_time  mean   std     min    max
+rabbitmq-client  39128       2.465  11.713  1.000  1192.000
+amqplib@0.10.3   42378       2.615  5.783   1.000  478.000
 
-// See API docs for all options
-const rabbit = new Connection({
-  url: 'amqp://guest:guest@localhost:5672',
-  // wait 1 to 30 seconds between connection retries
-  retryLow: 1000,
-  retryHigh: 30000,
-})
 
-rabbit.on('error', (err) => {
-  // connection refused, etc
-  console.error(err)
-})
-
-rabbit.on('connection', () => {
-  console.log('The connection is successfully (re)established')
-})
-
-async function run() {
-  // will wait for the connection to establish before creating a Channel
-  const ch = await rabbit.acquire()
-
-  // channels can emit some events too
-  ch.on('close', () => {
-    console.log('channel was closed')
-  })
-
-  // create a queue for the duration of this connection
-  await ch.queueDeclare({queue: 'my-queue', exclusive: true})
-
-  const data = {title: 'just some object'}
-
-  // resolves when the data has been flushed through the socket
-  // or if ch.confirmSelect() was called, will wait for an acknowledgement
-  await ch.basicPublish({routingKey: 'my-queue'}, data)
-
-  // consume messages until cancelled or until the channel is closed
-  await ch.basicConsume({queue: 'my-queue'}, (msg) => {
-    console.log(msg)
-    // acknowledge receipt of the message
-    ch.basicAck({deliveryTag: msg.deliveryTag})
-  })
-
-  // It's your responsibility to close any acquired channels
-  await ch.close()
-
-  // Don't forget to end the connection
-  await rabbit.close()
-}
-
-run()
+time per batch (milliseconds) (no queue)
+                 total_time  mean   std    min    max
+rabbitmq-client  23163       1.726  0.497  1.000  13.000
+amqplib@0.10.3   24897       1.842  0.444  1.000  17.000
 ```
 
-This library includes helper functions for creating publishers/consumers. These combine a few of the lower level amqp methods and can recover after connection loss, or after a number of other edge-cases you may not have considered. These are much safer to use since they don't provide direct access to a channel.
-
-Consider the following list of scenarios (not exhaustive):
-- Connection lost due to a server restart, missed heartbeats (timeout), forced by the management UI, etc.
-- Channel closed as a result of publishing to an exchange which does not exist (or was deleted), or attempting to acknowledge an invalid deliveryTag
-- Consumer closed from the management UI, or because the queue was deleted, or because basicCancel() was called
-
-In all of these cases you would need to create a new channel and re-declare any queues/exchanges/bindings before you can start publishing/consuming messages again. And you're probably publishing many messages, concurrently, so you'd want to make sure this setup only runs once per connection. If a consumer is cancelled then you may be able to reuse the channel but you still need to check the queue and ...
-
-The following methods aim to abstract all of that away by running the necessary setup as needed and handling all the edge-cases for you.
-
-- {@link Connection.createPublisher | Connection.createPublisher(config)}
-- {@link Connection.createConsumer | Connection.createConsumer(config, cb)}
-- {@link Connection.createRPCClient | Connection.createRPCClient(config)}
-
+## Quick start
+In addition to the lower-level RabbitMQ methods, this library exposes two main
+interfaces, a `Consumer` and a `Publisher` (which should cover 90% of uses
+cases), as well as a third `RPCClient` for request-response communication.
 ```javascript
-const rabbit = new Connection()
+import {Connection} from 'rabbitmq-client'
 
-// See API docs for all options
-const pro = rabbit.createPublisher({
-  // enable acknowledgements (resolve with error if publish is unsuccessful)
-  confirm: true,
-  // enable retries
-  maxAttempts: 2,
-  // ensure the existence of an exchange before we use it otherwise we could
-  // get a NOT_FOUND error
-  exchanges: [{exchange: 'my-events', type: 'topic', autoDelete: true}]
+// Initialize:
+const rabbit = new Connection('amqp://guest:guest@localhost:5672')
+rabbit.on('error', (err) => {
+  console.log('RabbitMQ connection error', err)
+})
+rabbit.on('connection', () => {
+  console.log('Connection successfully (re)established')
 })
 
-// just like Channel.basicPublish()
-await pro.publish(
-  {exchange: 'my-events', routingKey: 'org.users.create'},
-  {id: 1, name: 'Alan Turing'})
-
-// close the underlying channel when we're done,
-// e.g. the application is closing
-await pro.close()
-
+// Consume messages from a queue:
 // See API docs for all options
-const consumer = rabbit.createConsumer({
+const sub = rabbit.createConsumer({
   queue: 'user-events',
-  queueOptions: {exclusive: true},
+  queueOptions: {durable: true},
   // handle 2 messages at a time
   qos: {prefetchCount: 2},
-  exchanges: [{exchange: 'my-events', type: 'topic', autoDelete: true}],
-  queueBindings: [
-    // queue should get messages for org.users.create, org.users.update, ...
-    {exchange: 'my-events', routingKey: 'org.users.*'}
-  ]
+  // Optionally ensure an exchange exists
+  exchanges: [{exchange: 'my-events', type: 'topic'}],
+  // With a "topic" exchange, messages matching this pattern are routed to the queue
+  queueBindings: [{exchange: 'my-events', routingKey: 'users.*'}],
 }, async (msg) => {
-  console.log(msg)
-  await doSomething(msg)
-  // msg is automatically acknowledged when this function resolves or msg is
-  // rejected (and maybe requeued, or sent to a dead-letter-exchange) if this
-  // function throws an error
+  console.log('received message (user-events)', msg)
+  // The message is automatically acknowledged when this function ends.
+  // If this function throws an error, then msg is NACK'd (rejected) and
+  // possibly requeued or sent to a dead-letter exchange
 })
 
-// maybe the consumer was cancelled, or a message wasn't acknowledged
-consumer.on('error', (err) => {
-  console.log('consumer error', err)
+sub.on('error', (err) => {
+  // Maybe the consumer was cancelled, or the connection was reset before a
+  // message could be acknowledged.
+  console.log('consumer error (user-events)', err)
 })
 
-// if we want to stop our application gracefully then we can stop consuming
-// messages and wait for any pending handlers to settle like this:
-await consumer.close()
+// Declare a publisher
+// See API docs for all options
+const pub = rabbit.createPublisher({
+  // Enable publish confirmations, similar to consumer acknowledgements
+  confirm: true,
+  // Enable retries
+  maxAttempts: 2,
+  // Optionally ensure the existence of an exchange before we use it
+  exchanges: [{exchange: 'my-events', type: 'topic'}]
+})
+
+// Publish a message to a custom exchange
+await pub.send(
+  {exchange: 'my-events', routingKey: 'users.visit'}, // metadata
+  {id: 1, name: 'Alan Turing'}) // message content
+
+// Or publish directly to a queue
+await pub.send('user-events', {id: 1, name: 'Alan Turing'})
+
+// Clean up when you receive a shutdown signal
+async function onShutdown() {
+  // Waits for pending confirmations and closes the underlying Channel
+  await pub.close()
+  // Stop consuming. Wait for any pending message handlers to settle.
+  await sub.close()
+  await rabbit.close()
+}
+```
+
+## Connection.createConsumer() vs Channel.basicConsume()
+The above `Consumer` & `Publisher` interfaces are recommended for most cases.
+These combine a few of the lower level RabbitMQ methods (exposed on the
+`Channel` interface) and and are much safer to use since they can recover after
+connection loss, or after a number of other edge-cases you may not have
+imagined. Consider the following list of scenarios (not exhaustive):
+- Connection lost due to a server restart, missed heartbeats (timeout), forced
+  by the management UI, etc.
+- Channel closed as a result of publishing to an exchange which does not exist
+  (or was deleted), or attempting to acknowledge an invalid deliveryTag
+- Consumer closed from the management UI, or because the queue was deleted, or
+  because basicCancel() was called
+
+In all of these cases you would need to create a new channel and re-declare any
+queues/exchanges/bindings before you can start publishing/consuming messages
+again. And you're probably publishing many messages, concurrently, so you'd
+want to make sure this setup only runs once per connection. If a consumer is
+cancelled then you may be able to reuse the channel but you still need to check
+the queue and so on...
+
+The `Consumer` & `Publisher` interfaces abstract all of that away by running
+the necessary setup as needed and handling all the edge-cases for you.
+
+## Managing queues & exchanges
+The basic RabbitMQ methods are available on the `Channel` interface for
+creating/deleting queues, exchanges, or bindings, etc:
+
+```javascript
+// Will wait for the connection to establish and then create a Channel
+const ch = await rabbit.acquire()
+
+// Channels can emit some events too (see documentation)
+ch.on('close', () => {
+  console.log('channel was closed')
+})
+
+// Create a queue for the duration of this connection
+await ch.queueDeclare({queue: 'my-queue'})
+
+// Enable publisher acknowledgements
+await ch.confirmSelect()
+
+const data = {title: 'just some object'}
+
+// Resolves when the data has been flushed through the socket or if
+// ch.confirmSelect() was called: will wait for an acknowledgement
+await ch.basicPublish({routingKey: 'my-queue'}, data)
+
+const msg = ch.basicGet('my-queue')
+console.log(msg)
+
+await ch.queueDelete('my-queue')
+
+// It's your responsibility to close any acquired channels
+await ch.close()
+```
+
+## RPCClient: request-response communication between services
+This will create a single "client" `Channel` on which you may publish messages
+and listen for direct responses. This can allow, for example, two
+micro-services to communicate with each other using RabbitMQ as the middleman
+instead of directly via HTTP.
+
+```javascript
+// rpc-server.js
+const rabbit = new Connection()
+
+const rpcServer = rabbit.createConsumer({
+  queue: 'my-rpc-queue'
+}, async (req, reply) => {
+  console.log('request:', req.body)
+  await reply('pong')
+})
+
+process.on('SIGINT', async () => {
+  await rpcServer.close()
+  await rabbit.close()
+})
+```
+
+```javascript
+// rpc-client.js
+const rabbit = new Connection()
+
+const rpcClient = rabbit.createRPCClient({confirm: true})
+
+const res = await rpcClient.send('my-rpc-queue', 'ping')
+console.log('response:', res.body) // pong
+
+await rpcClient.close()
+await rabbit.close()
 ```

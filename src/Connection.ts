@@ -2,14 +2,27 @@ import net, {Socket} from 'node:net'
 import tls from 'node:tls'
 import EventEmitter from 'node:events'
 import {AMQPConnectionError, AMQPChannelError, AMQPError} from './exception'
-import {createAsyncReader, expBackoff, createDeferred, Deferred} from './util'
-import * as codec from './codec'
-import Channel from './Channel'
+import {READY_STATE, createAsyncReader, expBackoff, createDeferred, Deferred, recaptureAndThrow} from './util'
+import {
+  Cmd,
+  DataFrame,
+  FrameType,
+  HEARTBEAT_FRAME,
+  MethodFrame,
+  MethodParams,
+  PROTOCOL_HEADER,
+  decodeFrame,
+  encodeFrame,
+  Envelope,
+  MessageBody,
+  ReturnedMessage,
+  ReplyCode
+} from './codec'
+import {Channel} from './Channel'
 import normalizeOptions, {ConnectionOptions} from './normalize'
-import {READY_STATE, Envelope, MethodParams, Publisher, PublisherProps, MessageBody, DataFrame} from './types'
 import SortedMap from './SortedMap'
-import Consumer, {ConsumerProps, ConsumerHandler} from './Consumer'
-import RPCClient, {RPCProps} from './RPCClient'
+import {Consumer, ConsumerProps, ConsumerHandler} from './Consumer'
+import {RPCClient, RPCProps} from './RPCClient'
 
 /** @internal */
 function raceWithTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promise<T> {
@@ -27,7 +40,7 @@ const CLIENT_PROPERTIES = (pkg => ({
   information: pkg.homepage,
   product: pkg.name,
   version: pkg.version,
-  platform: `${process.platform}-node.js-${process.version}`,
+  platform: `node.js-${process.version}`,
   capabilities: {
     'basic.nack': true,
     'connection.blocked': true,
@@ -40,19 +53,43 @@ const CLIENT_PROPERTIES = (pkg => ({
   }
 }))(require('../package.json'))
 
-declare interface Connection {
+export declare interface Connection {
   /** The connection is successfully (re)established */
   on(name: 'connection', cb: () => void): this;
   /** The rabbitmq server is low on resources. Message publishers should pause.
-   * The outbound side of the TCP socket is blocked until "connection.unblocked"
-   * is received.  https://www.rabbitmq.com/connection-blocked.html */
+   * The outbound side of the TCP socket is blocked until
+   * "connection.unblocked" is received, meaning messages will be held in
+   * memory.
+   * {@link https://www.rabbitmq.com/connection-blocked.html}
+   * {@label BLOCKED} */
   on(name: 'connection.blocked', cb: (reason: string) => void): this;
   /** The rabbitmq server is accepting new messages. */
   on(name: 'connection.unblocked', cb: () => void): this;
   on(name: 'error', cb: (err: any) => void): this;
 }
 
-class Connection extends EventEmitter {
+/**
+ * This represents a single connection to a RabbitMQ server (or cluster). Once
+ * created, it will immediately attempt to establish a connection. When the
+ * connection is lost, for whatever reason, it will reconnect. This implements
+ * the EventEmitter interface and may emit `error` events. Close it with
+ * {@link Connection#close | Connection#close()}
+ *
+ * @example
+ * ```
+ * const rabbit = new Connection('amqp://guest:guest@localhost:5672')
+ * rabbit.on('error', (err) => {
+ *   console.log('RabbitMQ connection error', err)
+ * })
+ * rabbit.on('connection', () => {
+ *   console.log('RabbitMQ (re)connected')
+ * })
+ * process.on('SIGINT', () => {
+ *   rabbit.close()
+ * })
+ * ```
+ */
+export class Connection extends EventEmitter {
   /** @internal */
   _opt: ReturnType<typeof normalizeOptions>
   /** @internal */
@@ -109,8 +146,11 @@ class Connection extends EventEmitter {
       throw new AMQPConnectionError('CLOSING', 'channel creation failed; connection is closing')
     if (this._state.readyState === READY_STATE.CONNECTING) {
       // TODO also wait for connection.unblocked
-      await raceWithTimeout(this._state.onConnect.promise, this._opt.acquireTimeout,
-        'channel aquisition timed out')
+      await raceWithTimeout(
+        this._state.onConnect.promise,
+        this._opt.acquireTimeout,
+        'channel aquisition timed out'
+      ).catch(recaptureAndThrow)
     }
 
     // choosing an available channel id from this SortedMap is certainly slower
@@ -128,7 +168,7 @@ class Connection extends EventEmitter {
       this._state.leased.delete(id)
       this._checkEmpty()
     })
-    await ch._invoke('channel.open', {})
+    await ch._invoke(Cmd.ChannelOpen, Cmd.ChannelOpenOK, {rsvp1: ''})
     return ch
   }
 
@@ -164,7 +204,11 @@ class Connection extends EventEmitter {
 
     // might have transitioned to CLOSED while waiting for channels
     if (this._socket.writable) {
-      this._writeMethod(0, 'connection.close', {replyCode: 200, classId: 0, methodId: 0})
+      this._writeMethod({
+        type: FrameType.METHOD,
+        channelId: 0,
+        methodId: Cmd.ConnectionClose,
+        params: {replyCode: 200, methodId: 0, replyText: ''}})
       this._socket.end()
       await new Promise(resolve => this._socket.once('close', resolve))
     }
@@ -186,15 +230,15 @@ class Connection extends EventEmitter {
   }
 
   /** Create a message consumer that can recover from dropped connections.
-   * @param handler Process an incoming message. Unless noAck=true, the message
-   * will be acknowledged when this function resolves. The message will be
-   * rejected (nack) if this function throws an error */
-  createConsumer(props: ConsumerProps, handler: ConsumerHandler): Consumer {
-    return new Consumer(this, props, handler)
+   * @param cb Process an incoming message. */
+  createConsumer(props: ConsumerProps, cb: ConsumerHandler): Consumer {
+    return new Consumer(this, props, cb)
   }
 
-  /** Set up an anonymous pseudo-queue consumer/publisher to perform Remote
-   * Procedure Calls (RPC). */
+  /** This will create a single "client" `Channel` on which you may publish
+   * messages and listen for direct responses. This can allow, for example, two
+   * micro-services to communicate with each other using RabbitMQ as the
+   * middleman instead of directly via HTTP. */
   createRPCClient(props?: RPCProps): RPCClient {
     return new RPCClient(this, props || {})
   }
@@ -232,31 +276,30 @@ class Connection extends EventEmitter {
       return ch
     }
 
-    const publish = (envelope: Envelope, body: MessageBody) => {
-      if (isClosed)
-        return Promise.reject(new AMQPChannelError('CLOSED', 'publisher is closed'))
-      if (!_ch?.active) {
-        if (!pendingSetup)
-          pendingSetup = setup().finally(() =>{ pendingSetup = undefined })
-        return pendingSetup.then(ch => ch.basicPublish(envelope, body))
-      }
-      return _ch.basicPublish(envelope, body)
-    }
-
-    const publishWithRetry = async (envelope: Envelope, body: MessageBody) => {
+    const send = async (envelope: string|Envelope, body: MessageBody) => {
       let attempts = 0
       while (true) try {
-        return await publish(envelope, body)
+        if (isClosed)
+          throw new AMQPChannelError('CLOSED', 'publisher is closed')
+        if (!_ch?.active) {
+          if (!pendingSetup)
+            pendingSetup = setup().finally(() =>{ pendingSetup = undefined })
+          _ch = await pendingSetup
+        }
+        return await _ch.basicPublish(envelope, body)
       } catch (err) {
-        if (++attempts >= maxAttempts)
+        Error.captureStackTrace(err) // original async trace is likely not useful to users
+        if (++attempts >= maxAttempts) {
           throw err
-        else // notify & loop
+        } else { // notify & loop
           emitter.emit('retry', err, envelope, body)
+        }
       }
     }
 
     return Object.assign(emitter, {
-      publish: maxAttempts > 1 ? publishWithRetry : publish,
+      publish: send,
+      send: send,
       close() {
         isClosed = true
         if (pendingSetup)
@@ -338,7 +381,7 @@ class Connection extends EventEmitter {
         const read = createAsyncReader(socket)
         await this._negotiate(read)
         // consume AMQP DataFrames until the socket is closed
-        while (true) this._handleChunk(await codec.decodeFrame(read))
+        while (true) this._handleChunk(await decodeFrame(read))
       } catch (err) {
         // TODO if err instanceof AMQPConnectionError then invoke connection.close + socket.end() + socket.resume()
         // all bets are off when we get a codec error; just kill the socket
@@ -346,7 +389,7 @@ class Connection extends EventEmitter {
       }
     }
 
-    socket.write(codec.PROTOCOL_HEADER)
+    socket.write(PROTOCOL_HEADER)
     readerLoop()
 
     return socket
@@ -354,12 +397,14 @@ class Connection extends EventEmitter {
 
   /** @internal Establish connection parameters with the server. */
   private async _negotiate(read: (bytes: number) => Promise<Buffer>): Promise<void> {
-    const readFrame = async (fullName: string) => {
-      const frame = await codec.decodeFrame(read)
-      if (frame.channelId === 0 && frame.type === 'method' && frame.fullName === fullName)
-        return frame.params
-      if (frame.type === 'method' && frame.fullName === 'connection.close') {
-        throw new AMQPConnectionError(frame.params)
+    const readFrame = async <T extends Cmd>(methodId: T): Promise<MethodParams[T]> => {
+      const frame = await decodeFrame(read)
+      if (frame.channelId === 0 && frame.type === FrameType.METHOD && frame.methodId === methodId)
+        return frame.params as MethodParams[T]
+      if (frame.type === FrameType.METHOD && frame.methodId === Cmd.ConnectionClose) {
+        const strcode = ReplyCode[frame.params.replyCode] || String(frame.params.replyCode)
+        const msg = Cmd[frame.params.methodId] + ': ' + frame.params.replyText
+        throw new AMQPConnectionError(strcode, msg)
       }
       throw new AMQPConnectionError('COMMAND_INVALID',
         'received unexpected frame during negotiation: ' + JSON.stringify(frame))
@@ -374,19 +419,23 @@ class Connection extends EventEmitter {
     }
     this._socket.unshift(chunk)
 
-    /*const serverParams = */await readFrame('connection.start')
+    /*const serverParams = */await readFrame(Cmd.ConnectionStart)
     // TODO support EXTERNAL mechanism, i.e. x509 peer verification
     // https://github.com/rabbitmq/rabbitmq-auth-mechanism-ssl
     // serverParams.mechanisms === 'EXTERNAL PLAIN AMQPLAIN'
-    this._writeMethod(0, 'connection.start-ok', {
-      locale: 'en_US',
-      mechanism: 'PLAIN',
-      response: [null, this._opt.username, this._opt.password].join(String.fromCharCode(0)),
-      clientProperties: this._opt.connectionName
-        ? {...CLIENT_PROPERTIES, connection_name: this._opt.connectionName}
-        : CLIENT_PROPERTIES
-    })
-    const params = await readFrame('connection.tune')
+    this._writeMethod({
+      type: FrameType.METHOD,
+      channelId: 0,
+      methodId: Cmd.ConnectionStartOK,
+      params: {
+        locale: 'en_US',
+        mechanism: 'PLAIN',
+        response: [null, this._opt.username, this._opt.password].join(String.fromCharCode(0)),
+        clientProperties: this._opt.connectionName
+          ? {...CLIENT_PROPERTIES, connection_name: this._opt.connectionName}
+          : CLIENT_PROPERTIES
+      }})
+    const params = await readFrame(Cmd.ConnectionTune)
     const channelMax = params.channelMax > 0
       ? Math.min(this._opt.maxChannels, params.channelMax)
       : this._opt.maxChannels
@@ -396,9 +445,17 @@ class Connection extends EventEmitter {
       : this._opt.frameMax
     this._state.frameMax = frameMax
     const heartbeat = determineHeartbeat(params.heartbeat, this._opt.heartbeat)
-    this._writeMethod(0, 'connection.tune-ok', {channelMax, frameMax, heartbeat})
-    this._writeMethod(0, 'connection.open', {virtualHost: this._opt.vhost})
-    await readFrame('connection.open-ok')
+    this._writeMethod({
+      type: FrameType.METHOD,
+      channelId: 0,
+      methodId: Cmd.ConnectionTuneOK,
+      params: {channelMax, frameMax, heartbeat}})
+    this._writeMethod({
+      type: FrameType.METHOD,
+      channelId: 0,
+      methodId: Cmd.ConnectionOpen,
+      params: {virtualHost: this._opt.vhost || '/', rsvp1: ''}})
+    await readFrame(Cmd.ConnectionOpenOK)
 
     // create heartbeat timeout, or disable when 0
     if (heartbeat > 0) {
@@ -415,7 +472,7 @@ class Connection extends EventEmitter {
         if (!this._state.hasWrite) {
           // if connection.blocked then heartbeat monitoring is disabled
           if (this._socket.writable && !this._socket.writableCorked)
-            this._socket.write(codec.HEARTBEAT_FRAME)
+            this._socket.write(HEARTBEAT_FRAME)
         }
         this._state.hasWrite = false
       }, Math.ceil(heartbeat * 1000 / 2))
@@ -431,64 +488,70 @@ class Connection extends EventEmitter {
   }
 
   /** @internal */
-  _writeMethod<T extends keyof MethodParams>(channelId: number, fullName: T, params: MethodParams[T]): void {
-    const frame = codec.encodeFrame({type: 'method', channelId, fullName, params})
+  _writeMethod(params: MethodFrame): void {
+    const frame = encodeFrame(params)
     this._socket.write(frame)
   }
 
   /** @internal */
-  private _handleChunk(evt: DataFrame): void {
+  private _handleChunk(frame: DataFrame): void {
     this._state.hasRead = true
     let ch: Channel|undefined
-    if (evt) {
-      if (evt.type === 'heartbeat') {
+    if (frame) {
+      if (frame.type === FrameType.HEARTBEAT) {
         // still alive
-      } else if (evt.type === 'method') {
-        switch (evt.fullName) {
-          case 'connection.close':
+      } else if (frame.type === FrameType.METHOD) {
+        switch (frame.methodId) {
+          case Cmd.ConnectionClose:
             if (this._socket.writable) {
-              this._writeMethod(0, 'connection.close-ok', undefined)
+              this._writeMethod({
+                type: FrameType.METHOD,
+                channelId: 0,
+                methodId: Cmd.ConnectionCloseOK,
+                params: undefined})
               this._socket.end()
               this._socket.uncork()
             }
-            this._socket.emit('error', new AMQPConnectionError(evt.params))
+            const strcode = ReplyCode[frame.params.replyCode] || String(frame.params.replyCode)
+            const msg = Cmd[frame.params.methodId] + ': ' + frame.params.replyText
+            this._socket.emit('error', new AMQPConnectionError(strcode, msg))
             break
-          case 'connection.close-ok':
+          case Cmd.ConnectionCloseOK:
             // just wait for the socket to fully close
             break
-          case 'connection.blocked':
+          case Cmd.ConnectionBlocked:
             this._socket.cork()
-            this.emit('connection.blocked', evt.params.reason)
+            this.emit('connection.blocked', frame.params.reason)
             break
-          case 'connection.unblocked':
+          case Cmd.ConnectionUnblocked:
             this._socket.uncork()
             this.emit('connection.unblocked')
             break
           default:
-            ch = this._state.leased.get(evt.channelId)
+            ch = this._state.leased.get(frame.channelId)
             if (ch == null) {
               // TODO test me
               throw new AMQPConnectionError('UNEXPECTED_FRAME',
                 'client received a method frame for an unexpected channel')
             }
-            ch._onMethod(evt)
+            ch._onMethod(frame)
         }
-      } else if (evt.type === 'header') {
-        const ch = this._state.leased.get(evt.channelId)
+      } else if (frame.type === FrameType.HEADER) {
+        const ch = this._state.leased.get(frame.channelId)
         if (ch == null) {
           // TODO test me
           throw new AMQPConnectionError('UNEXPECTED_FRAME',
             'client received a header frame for an unexpected channel')
         }
-        ch._onHeader(evt)
-      } else if (evt.type === 'body') {
-        const ch = this._state.leased.get(evt.channelId)
+        ch._onHeader(frame)
+      } else if (frame.type === FrameType.BODY) {
+        const ch = this._state.leased.get(frame.channelId)
         if (ch == null) {
           // TODO test me
           throw new AMQPConnectionError('UNEXPECTED_FRAME',
             'client received a body frame for an unexpected channel')
         }
-        ch._onBody(evt)
+        ch._onBody(frame)
       }
     }
   }
@@ -521,4 +584,71 @@ function determineHeartbeat(x: number, y: number): number {
   return Math.max(x, y)
 }
 
-export default Connection
+export interface PublisherProps {
+  /** Enable publish-confirm mode. See {@link Channel#confirmSelect} */
+  confirm?: boolean,
+  /** Maximum publish attempts. Retries are disabled by default.
+   * Increase this number to retry when a publish fails. The Connection options
+   * acquireTimeout, retryLow, and retryHigh will affect time between retries.
+   * Each failed attempt will also emit a "retry" event.
+   * @default 1
+   * */
+  maxAttempts?: number,
+  /** see {@link Channel.on}('basic.return') */
+  onReturn?: (msg: ReturnedMessage) => void,
+  /**
+   * Define any queues to be declared before the first publish and whenever
+   * the connection is reset. Same as {@link Channel#queueDeclare | Channel#queueDeclare()}
+   */
+  queues?: Array<MethodParams[Cmd.QueueDeclare]>
+  /**
+   * Define any exchanges to be declared before the first publish and
+   * whenever the connection is reset. Same as {@link Channel#exchangeDeclare | Channel#exchangeDeclare()}
+   */
+  exchanges?: Array<MethodParams[Cmd.ExchangeDeclare]>
+  /**
+   * Define any queue-exchange bindings to be declared before the first publish and
+   * whenever the connection is reset. Same as {@link Channel#queueBind | Channel#queueBind()}
+   */
+  queueBindings?: Array<MethodParams[Cmd.QueueBind]>
+  /**
+   * Define any exchange-exchange bindings to be declared before the first publish and
+   * whenever the connection is reset. Same as {@link Channel#exchangeBind | Channel#exchangeBind()}
+   */
+  exchangeBindings?: Array<MethodParams[Cmd.ExchangeBind]>
+}
+
+/**
+ * @see {@link Connection#createPublisher | Connection#createPublisher()}
+ *
+ * The underlying Channel is lazily created the first time a message is
+ * published.
+ *
+ * @example
+ * ```
+ * const pub = rabbit.createPublisher({
+ *   confirm: true,
+ *   exchanges: [{exchange: 'user', type: 'topic'}]
+ * })
+ *
+ * await pub.send({exchange: 'user', routingKey: 'user.create'}, userInfo)
+ *
+ * await pub.close()
+ * ```
+ */
+export interface Publisher extends EventEmitter {
+  /** @deprecated Alias for {@link Publisher#send} */
+  publish(envelope: string|Envelope, body: MessageBody): Promise<void>;
+  /** {@inheritDoc Channel.basicPublish} */
+  send(envelope: Envelope, body: MessageBody): Promise<void>;
+  /** Send directly to a queue. Same as `send({routingKey: queue}, body)` */
+  send(queue: string, body: MessageBody): Promise<void>;
+  /** @ignore */
+  send(envelope: string|Envelope, body: MessageBody): Promise<void>;
+  /** {@inheritDoc Channel.on:BASIC_RETURN} */
+  on(name: 'basic.return', cb: (msg: ReturnedMessage) => void): this;
+  /** See maxAttempts. Emitted each time a failed publish will be retried. */
+  on(name: 'retry', cb: (err: any, envelope: Envelope, body: MessageBody) => void): this;
+  /** Close the underlying channel */
+  close(): Promise<void>;
+}

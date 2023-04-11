@@ -4,6 +4,9 @@ import {promisify} from 'node:util'
 import EventEmitter from 'node:events'
 
 /** @internal */
+export enum READY_STATE {CONNECTING, OPEN, CLOSING, CLOSED}
+
+/** @internal */
 export interface Deferred<T=any> {
   resolve: (value: T | PromiseLike<T>) => void
   reject: (reason?: any) => void
@@ -150,6 +153,13 @@ export class EncoderStream<T=unknown> extends Writable {
   }
 }
 
+/** @internal */
 export function expectEvent<T=any>(emitter: EventEmitter, name: string|symbol): Promise<T> {
   return new Promise<T>((resolve) => { emitter.once(name, resolve) })
+}
+
+/** @internal */
+export function recaptureAndThrow(err: Error): any {
+  Error.captureStackTrace(err, recaptureAndThrow)
+  throw err
 }

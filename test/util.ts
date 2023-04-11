@@ -1,6 +1,5 @@
 import {Socket, createServer} from 'node:net'
-import {DataFrame} from '../src/types'
-import {decodeFrame} from '../src/codec'
+import {DataFrame, decodeFrame} from '../src/codec'
 import {expectEvent, createAsyncReader} from '../src/util'
 
 function sleep(ms: number) {

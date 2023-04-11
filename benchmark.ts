@@ -1,18 +1,20 @@
 /* eslint no-console: off */
 import {performance, createHistogram} from 'node:perf_hooks'
+import {randomBytes} from 'node:crypto'
+// @ts-ignore
 import amqplib from 'amqplib' // npm install --no-save amqplib
-import Connection from './src'
+import Connection from './lib'
 
 declare global {
   namespace NodeJS {
     export interface ProcessEnv {
-      MODULE: 'rabbitmq-client' | 'amqplib'
-      RABBITMQ_URL: string
+      MODULE?: 'rabbitmq-client' | 'amqplib'
+      RABBITMQ_URL?: string | undefined
       /** Disable Nagle's algorithm (send tcp packets immediately) */
-      NO_DELAY: 'true'|'false'
+      NO_DELAY?: 'true'|'false'
       /** Number of messages to send */
-      TOTAL: string
-      BATCH_SIZE: string
+      TOTAL?: string
+      BATCH_SIZE?: string
     }
   }
 }
@@ -22,8 +24,9 @@ if (!RABBITMQ_URL)
   throw new TypeError('RABBITMQ_URL is unset')
 const NO_DELAY = process.env.RABBITMQ_NO_DELAY === 'true'
 const MODULE = process.env.MODULE || 'rabbitmq-client'
-const TOTAL = Number.parseInt(process.env.TOTAL) || 1000
-const BATCH_SIZE = Number.parseInt(process.env.BATCH_SIZE) || Math.ceil(TOTAL * 0.05)
+const TOTAL = Number.parseInt((process.env.TOTAL || '1000').replace(/_/g, ''))
+const BATCH_SIZE = Number.parseInt((process.env.BATCH_SIZE || '').replace(/_/g, '')) || Math.ceil(TOTAL * 0.05)
+const ROUTING_KEY = process.env.ROUTING_KEY || 'perf_' + randomBytes(8).toString('hex')
 
 const PAYLOAD = Buffer.from('prometheus')
 
@@ -32,6 +35,7 @@ MODULE=${MODULE}
 NO_DELAY=${NO_DELAY}
 TOTAL (messages)=${TOTAL}
 BATCH_SIZE=${BATCH_SIZE}
+ROUTING_KEY=${ROUTING_KEY}
 `)
 if (require.main === module) {
   if (MODULE === 'amqplib')
@@ -44,9 +48,7 @@ function printHistogram(name: string, pct=false): void {
   const hist = createHistogram()
   let total = 0
 
-  // @ts-ignore
   const start = performance.getEntriesByName('start:' + name, 'mark')
-  // @ts-ignore
   const end = performance.getEntriesByName('stop:' + name, 'mark')
 
   for (let i = 0; i < Math.min(start.length, end.length); ++i) {
@@ -57,16 +59,36 @@ function printHistogram(name: string, pct=false): void {
   total = Math.ceil(total)
   performance.clearMarks('start:' + name)
   performance.clearMarks('stop:' + name)
-  console.log(`${name} mean=${hist.mean} min=${hist.min} max=${hist.max} SD=${hist.stddev.toFixed(3)} total=${total}ms`)
+
+  const rows = [
+    ['total_time', 'mean', 'std', 'min', 'max'],
+    [total.toFixed(0), hist.mean.toFixed(3), hist.stddev.toFixed(3), hist.min.toFixed(3), hist.max.toFixed(3)]
+  ]
+
+  const width = new Array(rows[0].length)
+  for (let j = 0; j < rows[0].length; ++j) {
+    width[j] = 0
+    for (let i = 0; i < rows.length; ++i) {
+      const len = rows[i][j].length
+      if (width[j] < len)
+        width[j] = len
+    }
+  }
+  let table = ''
+  for (let i = 0; i < rows.length; ++i) {
+    for (let j = 0; j < rows[i].length; ++j) {
+      table += '  ' + rows[i][j].padEnd(width[j])
+    }
+    table += '\n'
+  }
+
+  console.log(`${name}\n${table}`)
   if (pct) console.log(hist.percentiles)
 }
 
 async function main_src() {
   const rabbit = new Connection({
     url: RABBITMQ_URL,
-    heartbeat: 10,
-    acquireTimeout: 10e3,
-    retryHigh: 5e3,
     noDelay: NO_DELAY
   })
 
@@ -76,51 +98,48 @@ async function main_src() {
 
   const ch = await rabbit.acquire()
   await ch.confirmSelect()
-  await ch.queueDeclare({queue: 'user-events', arguments: {'x-message-ttl': 30000}})
 
+  const hs = 'time per batch (milliseconds)'
   for (let i = 0; i < TOTAL; i+=BATCH_SIZE) {
-    process.stdout.write('.')
-    const batchSize = Math.min(i+BATCH_SIZE, TOTAL)
-    const pending = new Array(batchSize)
-    performance.mark('start:time per batch')
-    for (let j = 0; j < batchSize; ++j) {
-      pending[j] = ch.basicPublish({routingKey: 'user-events'}, PAYLOAD)
+    const pending = new Array(BATCH_SIZE)
+    performance.mark('start:' + hs)
+    for (let j = 0; j < BATCH_SIZE; ++j) {
+      pending[j] = ch.basicPublish({routingKey: ROUTING_KEY}, PAYLOAD)
     }
     await Promise.all(pending)
-    performance.mark('stop:time per batch')
+    performance.mark('stop:' + hs)
   }
 
   await ch.close()
   await rabbit.close()
 
   console.log('')
-  printHistogram('time per batch')
+  printHistogram(hs)
 }
 
 async function main_amqplib() {
   const conn = await amqplib.connect(RABBITMQ_URL, {
     noDelay: NO_DELAY
   })
+  // @ts-ignore
   conn.on('error', err => { console.error('connection error', err) })
   conn.on('blocked', () => { console.log('connection.blocked') })
   conn.on('unblocked', () => { console.log('connection.blocked') })
   const ch = await conn.createConfirmChannel()
-  await ch.assertQueue('user-events', {durable: false, arguments: {'x-message-ttl': 30000}})
 
+  const hs = 'time per batch (milliseconds)'
   for (let i = 0; i < TOTAL; i+=BATCH_SIZE) {
-    process.stdout.write('.')
-    const batchSize = Math.min(i+BATCH_SIZE, TOTAL)
-    performance.mark('start:time per batch')
-    for (let j = 0; j < batchSize; ++j) {
-      ch.publish('', 'user-events', PAYLOAD, {})
+    performance.mark('start:' + hs)
+    for (let j = 0; j < BATCH_SIZE; ++j) {
+      ch.publish('', ROUTING_KEY, PAYLOAD, {})
     }
     await ch.waitForConfirms()
-    performance.mark('stop:time per batch')
+    performance.mark('stop:' + hs)
   }
 
   await ch.close()
   await conn.close()
 
   console.log('')
-  printHistogram('time per batch')
+  printHistogram(hs)
 }

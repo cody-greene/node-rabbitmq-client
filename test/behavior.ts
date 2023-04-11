@@ -2,7 +2,7 @@ import test from 'tape'
 import Connection, {AsyncMessage} from '../src'
 import {createServer} from 'node:net'
 import {expectEvent, createDeferred, Deferred} from '../src/util'
-import {MethodFrame, DataFrame} from '../src/types'
+import {MethodFrame, DataFrame, Cmd, FrameType} from '../src/codec'
 import {useFakeServer, sleep} from './util'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
@@ -158,22 +158,22 @@ test('will reconnect when connection.close is received from the server', async (
       // S:connection.start
       socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
       frame = await next() as MethodFrame
-      t.is(frame.fullName, 'connection.start-ok')
+      t.is(frame.methodId, Cmd.ConnectionStartOK)
 
       // S:connection.tune
       socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
       frame = await next() as MethodFrame
-      t.is(frame.fullName, 'connection.tune-ok')
+      t.is(frame.methodId, Cmd.ConnectionTuneOK)
 
       frame = await next() as MethodFrame
-      t.is(frame.fullName, 'connection.open')
+      t.is(frame.methodId, Cmd.ConnectionOpen)
       // S:connection.open-ok
       socket.write('AQAAAAAABQAKACkAzg', 'base64')
 
       // S:connection.close
       socket.end('AQAAAAAAIwAKADIBQBhDT05ORUNUSU9OX0ZPUkNFRCAtIHRlc3QAAAAAzg', 'base64')
       frame = await next() as MethodFrame
-      t.is(frame.fullName, 'connection.close-ok')
+      t.is(frame.methodId, Cmd.ConnectionCloseOK)
     },
     async (socket, next) => {
       let frame
@@ -181,20 +181,20 @@ test('will reconnect when connection.close is received from the server', async (
       // S:connection.start
       socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
       frame = await next() as MethodFrame
-      t.is(frame.fullName, 'connection.start-ok')
+      t.is(frame.methodId, Cmd.ConnectionStartOK)
 
       // S:connection.tune
       socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
       frame = await next() as MethodFrame
-      t.is(frame.fullName, 'connection.tune-ok')
+      t.is(frame.methodId, Cmd.ConnectionTuneOK)
 
       frame = await next() as MethodFrame
-      t.is(frame.fullName, 'connection.open')
+      t.is(frame.methodId, Cmd.ConnectionOpen)
       // S:connection.open-ok
       socket.write('AQAAAAAABQAKACkAzg', 'base64')
 
       frame = await next() as MethodFrame
-      t.is(frame.fullName, 'connection.close')
+      t.is(frame.methodId, Cmd.ConnectionClose)
       // S:connection.close-ok
       socket.end('AQAAAAAABAAKADPO', 'base64')
       server.close()
@@ -298,13 +298,20 @@ test('handles encoder errors', async (t) => {
   const rabbit = new Connection(RABBITMQ_URL)
   const ch = await rabbit.acquire()
 
+  const err = await ch.basicCancel({consumerTag: null as any}).catch(err => err)
+  t.is(err.message, 'consumerTag is undefined; expected a string',
+    'should check required params before encoding')
+
+  // will explode when encoding
+  const bomb: string = {toString() { throw new TypeError('boom') }} as any
+
   t.is(ch.id, 1, 'got a channel')
   const errs = await Promise.all([
-    ch.basicCancel({} as any).catch(err => err), // the bad one
+    ch.basicCancel({consumerTag: bomb}).catch(err => err), // the bad one
     ch.queueDeclare({exclusive: true}).catch(err => err), // this will never be sent
     expectEvent(ch, 'close'),
   ])
-  t.is(errs[0].message, 'basic.cancel consumerTag (a required param) is undefined')
+  t.is(errs[0].message, 'boom')
   t.is(errs[1].code, 'CH_CLOSE', 'buffered RPC is rejected')
 
   const other = await rabbit.acquire()
@@ -319,14 +326,17 @@ test('handles encoder errors (while closing)', async (t) => {
   const rabbit = new Connection(RABBITMQ_URL)
   const ch = await rabbit.acquire()
 
+  // will explode when encoding
+  const bomb: string = {toString() { throw new TypeError('boom') }} as any
+
   t.is(ch.id, 1, 'got a channel')
   const errs = await Promise.all([
-    ch.basicCancel({} as any).catch(err => err), // the bad one
+    ch.basicCancel({consumerTag: bomb}).catch(err => err), // the bad one
     ch.queueDeclare({exclusive: true}).catch(err => err), // this will never be sent
     ch.close(), // <-- new
     expectEvent(ch, 'close'),
   ])
-  t.is(errs[0].message, 'basic.cancel consumerTag (a required param) is undefined')
+  t.is(errs[0].message, 'boom')
   t.is(errs[1].code, 'CH_CLOSE', 'buffered RPC is rejected')
 
   const other = await rabbit.acquire()
@@ -347,15 +357,15 @@ test('[opt.heartbeat] creates a timeout to detect a dead socket', async (t) => {
     // S:connection.start
     socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.start-ok')
+    t.is(frame.methodId, Cmd.ConnectionStartOK)
 
     // S:connection.tune
     socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.tune-ok')
+    t.is(frame.methodId, Cmd.ConnectionTuneOK)
 
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.open')
+    t.is(frame.methodId, Cmd.ConnectionOpen)
     // S:connection.open-ok
     socket.write('AQAAAAAABQAKACkAzg', 'base64')
 
@@ -384,25 +394,25 @@ test('[opt.heartbeat] regularly sends a heartbeat frame on its own', async (t) =
     // S:connection.start
     socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.start-ok')
+    t.is(frame.methodId, Cmd.ConnectionStartOK)
 
     // S:connection.tune
     socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.tune-ok')
+    t.is(frame.methodId, Cmd.ConnectionTuneOK)
 
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.open')
+    t.is(frame.methodId, Cmd.ConnectionOpen)
     // S:connection.open-ok
     socket.write('AQAAAAAABQAKACkAzg', 'base64')
 
     frame = await next() as DataFrame
-    t.is(frame.type, 'heartbeat', 'got heartbeat from client')
+    t.is(frame.type, FrameType.HEARTBEAT, 'got heartbeat from client')
 
     // S:connection.close
     socket.end('AQAAAAAAIwAKADIBQBhDT05ORUNUSU9OX0ZPUkNFRCAtIHRlc3QAAAAAzg', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.close-ok', 'client confirmed forced close')
+    t.is(frame.methodId, Cmd.ConnectionCloseOK, 'client confirmed forced close')
   })
 
   const rabbit = new Connection({
@@ -428,7 +438,7 @@ test('can create a basic consumer', async (t) => {
   t.pass('published messages')
 
   const {consumerTag} = await ch.basicConsume({queue}, (msg) => {
-    expectedMessages[Number(msg.deliveryTag) - 1].resolve(msg)
+    expectedMessages[msg.deliveryTag - 1].resolve(msg)
   })
   t.pass('created basic consumer')
 
@@ -657,22 +667,22 @@ test('Connection should retry with next cluster node', async (t) => {
     // S:connection.start
     socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.start-ok')
+    t.is(frame.methodId, Cmd.ConnectionStartOK)
 
     // S:connection.tune
     socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.tune-ok')
+    t.is(frame.methodId, Cmd.ConnectionTuneOK)
 
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.open')
+    t.is(frame.methodId, Cmd.ConnectionOpen)
     // S:connection.open-ok
     socket.write('AQAAAAAABQAKACkAzg', 'base64')
 
     // S:connection.close
     socket.end('AQAAAAAAIwAKADIBQBhDT05ORUNUSU9OX0ZPUkNFRCAtIHRlc3QAAAAAzg', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.close-ok', 'client confirmed forced close')
+    t.is(frame.methodId, Cmd.ConnectionCloseOK, 'client confirmed forced close')
   })
   const [port2, server2] = await useFakeServer(async (socket, next) => {
     server2.close()
@@ -683,20 +693,20 @@ test('Connection should retry with next cluster node', async (t) => {
     // S:connection.start
     socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.start-ok')
+    t.is(frame.methodId, Cmd.ConnectionStartOK)
 
     // S:connection.tune
     socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.tune-ok')
+    t.is(frame.methodId, Cmd.ConnectionTuneOK)
 
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.open')
+    t.is(frame.methodId, Cmd.ConnectionOpen)
     // S:connection.open-ok
     socket.write('AQAAAAAABQAKACkAzg', 'base64')
 
     frame = await next() as MethodFrame
-    t.is(frame.fullName, 'connection.close', 'client initiated close')
+    t.is(frame.methodId, Cmd.ConnectionClose, 'client initiated close')
     // S:connection.close-ok
     socket.end('AQAAAAAABAAKADPO', 'base64')
   })

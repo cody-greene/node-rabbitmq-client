@@ -1,11 +1,12 @@
-import Connection from './Connection'
+import {Connection, PublisherProps, Publisher} from './Connection'
 
 export default Connection
 export {Connection}
 export {AMQPConnectionError, AMQPChannelError, AMQPError} from './exception'
 
-export type {default as RPCCLient, RPCProps} from './RPCClient'
-export type {default as Consumer, ConsumerProps, ConsumerHandler, ReplyFN} from './Consumer'
-export type {default as Channel, ConsumerCallback} from './Channel'
+export type {PublisherProps, Publisher}
+export type {RPCClient, RPCProps} from './RPCClient'
+export type {Consumer, ConsumerProps, ConsumerHandler} from './Consumer'
+export type {Channel} from './Channel'
 export type {ConnectionOptions} from './normalize'
-export * from './types'
+export type {Cmd, Decimal, ReturnedMessage, SyncMessage, AsyncMessage, Envelope, MessageBody, HeaderFields, MethodParams} from './codec'

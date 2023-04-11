@@ -1,7 +1,6 @@
-import {randomBytes} from 'node:crypto'
-import {AsyncMessage, MethodParams, Envelope} from './types'
-import type Channel from './Channel'
-import type Connection from './Connection'
+import type {AsyncMessage, MethodParams, Envelope, Cmd} from './codec'
+import type {Channel} from './Channel'
+import type {Connection} from './Connection'
 import {createDeferred, Deferred} from './util'
 import {AMQPChannelError, AMQPError} from './exception'
 
@@ -10,54 +9,91 @@ export interface RPCProps {
   confirm?: boolean
   /** Any exchange-exchange bindings to be declared before the consumer and
    * whenever the connection is reset. */
-  exchangeBindings?: Array<MethodParams['exchange.bind']>
+  exchangeBindings?: Array<MethodParams[Cmd.ExchangeBind]>
   /** Any exchanges to be declared before the consumer and whenever the
    * connection is reset */
-  exchanges?: Array<MethodParams['exchange.declare']>
+  exchanges?: Array<MethodParams[Cmd.ExchangeDeclare]>
+  /** Retries are disabled by default.
+   * Increase this number to retry when a request fails due to timeout or
+   * connection loss. The Connection options acquireTimeout, retryLow, and
+   * retryHigh will affect time between retries.
+   * @default 1 */
+  maxAttempts?: number
   /** Any queue-exchange bindings to be declared before the consumer and
    * whenever the connection is reset. */
-  queueBindings?: Array<MethodParams['queue.bind']>
+  queueBindings?: Array<MethodParams[Cmd.QueueBind]>
   /** Define any queues to be declared before the first publish and whenever
    * the connection is reset. Same as {@link Channel.queueDeclare} */
-  queues?: Array<MethodParams['queue.declare']>
-  /** default=(30000) Max time to wait for a response, in milliseconds.
+  queues?: Array<MethodParams[Cmd.QueueDeclare]>
+  /** Max time to wait for a response, in milliseconds.
    * Must be > 0. Note that the acquireTimeout will also affect requests.
+   * @default 30_000
    * */
   timeout?: number
 }
 
-const DEFAULT_TIMEOUT = 30e3
+const DEFAULT_TIMEOUT = 30_000
 
 /**
- * See {@link Connection.createRPCClient} & {@link RPCProps}
+ * @see {@link Connection#createRPCClient | Connection#createRPCClient()}
+ * @see {@link RPCProps}
+ * @see {@link https://www.rabbitmq.com/direct-reply-to.html}
  *
- * This is a single "client" Channel on which you may publish messages and
- * listen for responses. You will also need to create a "server" Channel to
- * handle these requests and publish responses. The response message should be
- * published with (at minimum):
- * ```
- * ch.basicPublish({
- *   routingKey: reqmsg.replyTo,
- *   correlationId: reqmsg.correlationId
- * }, messageBody)
- * ```
+ * This will create a single "client" `Channel` on which you may publish
+ * messages and listen for direct responses. This can allow, for example, two
+ * micro-services to communicate with each other using RabbitMQ as the
+ * middleman instead of directly via HTTP.
  *
  * If you're using the createConsumer() helper, then you can reply to RPC
- * requests simply by using the 2nd argument of the {@link ConsumerHandler}.
+ * requests simply by using the `reply()` argument of
+ * the {@link ConsumerHandler}.
  *
  * Also, since this wraps a Channel, this must be closed before closing the
- * Connection.
+ * Connection: `RPCClient.close()`
  *
- * See https://www.rabbitmq.com/direct-reply-to.html
+ * @example
+ * ```
+ * // rpc-client.js
+ * const rabbit = new Connection()
+ *
+ * const rpcClient = rabbit.createRPCClient({confirm: true})
+ *
+ * const res = await rpcClient.send('my-rpc-queue', 'ping')
+ * console.log('response:', res.body) // pong
+ *
+ * await rpcClient.close()
+ * await rabbit.close()
+ * ```
  *
  * ```
- * const client = rabbit.createRPCClient({confirm: true})
- * const res = await client.publish({routingKey: 'my-rpc-queue'}, 'ping')
- * console.log(res)
- * await client.close()
+ * // rpc-server.js
+ * const rabbit = new Connection()
+ *
+ * const rpcServer = rabbit.createConsumer({
+ *   queue: 'my-rpc-queue'
+ * }, async (req, reply) => {
+ *   console.log('request:', req.body)
+ *   await reply('pong')
+ * })
+ *
+ * process.on('SIGINT', async () => {
+ *   await rpcServer.close()
+ *   await rabbit.close()
+ * })
  * ```
- * */
-class RPCClient {
+ *
+ * If you're communicating with a different rabbitmq client implementation
+ * (maybe in a different language) then the consumer should send responses
+ * like this:
+ * ```
+ * ch.basicPublish({
+ *   routingKey: req.replyTo,
+ *   correlationId: req.correlationId,
+ *   exchange: ""
+ * }, responseBody)
+ * ```
+ */
+export class RPCClient {
   /** @internal */
   _conn: Connection
   /** @internal */
@@ -68,6 +104,8 @@ class RPCClient {
   _requests = new Map<string, Deferred<AsyncMessage>>()
   /** @internal */
   _pendingSetup?: Promise<void>
+  /** @internal CorrelationId counter */
+  _id = 0
   /** True while the client has not been explicitly closed */
   active = true
 
@@ -123,34 +161,60 @@ class RPCClient {
     // ch.once('basic.cancel') shouldn't happen
   }
 
-  /** Perform a RPC. Should resolve with the response message */
-  async publish(params: string|Envelope, body: any): Promise<AsyncMessage> {
-    if (!this.active)
-      throw new AMQPChannelError('RPC_CLOSED', 'RPC client is closed')
-    if (!this._ch?.active) {
-      if (!this._pendingSetup)
-        this._pendingSetup = this._setup().finally(() =>{ this._pendingSetup = undefined })
-      await this._pendingSetup
+  /** Like {@link Channel#basicPublish}, but it resolves with a response
+   * message, or rejects with a timeout.
+   * Additionally, some fields are automatically set:
+   * - {@link Envelope.replyTo}
+   * - {@link Envelope.correlationId}
+   * - {@link Envelope.expiration}
+   */
+  send(envelope: Envelope, body: any): Promise<AsyncMessage>
+  /** Send directly to a queue. Same as `send({routingKey: queue}, body)` */
+  send(queue: string, body: any): Promise<AsyncMessage>
+  /** @ignore */
+  send(envelope: string|Envelope, body: any): Promise<AsyncMessage>
+  async send(envelope: string|Envelope, body: any): Promise<AsyncMessage> {
+    const maxAttempts = this._props.maxAttempts || 1
+    let attempts = 0
+    while (true) try {
+      if (!this.active)
+        throw new AMQPChannelError('RPC_CLOSED', 'RPC client is closed')
+      if (!this._ch?.active) {
+        if (!this._pendingSetup)
+          this._pendingSetup = this._setup().finally(() =>{ this._pendingSetup = undefined })
+        await this._pendingSetup
+      }
+
+      const id = String(++this._id)
+      const timeout = this._props.timeout == null ? DEFAULT_TIMEOUT : this._props.timeout
+      await this._ch!.basicPublish({
+        ...(typeof envelope === 'string' ? {routingKey: envelope} : envelope),
+        replyTo: 'amq.rabbitmq.reply-to',
+        correlationId: id,
+        expiration: String(timeout)
+      }, body)
+
+      const dfd = createDeferred<AsyncMessage>()
+      const timer = setTimeout(() => {
+        dfd.reject(new AMQPError('RPC_TIMEOUT', 'RPC response timed out'))
+        this._requests.delete(id)
+      }, timeout)
+      this._requests.set(id, dfd)
+
+      // remember to stop the timer if we get a response or if there is some other failure
+      return await dfd.promise.finally(() =>{ clearTimeout(timer) })
+    } catch (err) {
+      if (++attempts >= maxAttempts) {
+        Error.captureStackTrace(err) // original async trace is likely not useful to users
+        throw err
+      }
+      // else loop; notify with event?
     }
+  }
 
-    const id = randomBytes(8).toString('base64url')
-    const timeout = this._props.timeout == null ? DEFAULT_TIMEOUT : this._props.timeout
-    await this._ch!.basicPublish({
-      ...(typeof params === 'string' ? {routingKey: params} : params),
-      replyTo: 'amq.rabbitmq.reply-to',
-      correlationId: id,
-      expiration: String(timeout)
-    }, body)
-
-    const dfd = createDeferred<AsyncMessage>()
-    const timer = setTimeout(() => {
-      dfd.reject(new AMQPError('RPC_TIMEOUT', 'RPC response timed out'))
-      this._requests.delete(id)
-    }, timeout)
-    this._requests.set(id, dfd)
-
-    // remember to stop the timer if we get a response or if there is some other failure
-    return dfd.promise.finally(() =>{ clearTimeout(timer) })
+  /** @deprecated Alias for {@link RPCClient#send} */
+  publish(envelope: string|Envelope, body: any): Promise<AsyncMessage> {
+    return this.send(envelope, body)
   }
 
   /** Stop consuming messages. Close the channel once all pending message
@@ -168,5 +232,3 @@ class RPCClient {
     await this._ch?.close()
   }
 }
-
-export default RPCClient
