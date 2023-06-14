@@ -15,33 +15,39 @@ const DEFAULT_OPTS = {
 }
 
 export interface ConnectionOptions {
-  /** (default=20000) Milliseconds to wait before aborting a Channel creation attempt, i.e. acquire() */
+  /** Milliseconds to wait before aborting a Channel creation attempt, i.e. acquire()
+   * @default 20_000*/
   acquireTimeout?: number,
   /** Custom name for the connection, visible in the server's management UI */
   connectionName?: string,
-  /** (default=10000) Max wait time, in milliseconds, for a connection attempt */
+  /** Max wait time, in milliseconds, for a connection attempt
+   * @default 10_000*/
   connectionTimeout?: number,
-  /** (default=4096) Max size, in bytes, of AMQP data frames. Protocol max is
-   * 2^32-1. Actual value is negotiated with the server. */
+  /** Max size, in bytes, of AMQP data frames. Protocol max is
+   * 2^32-1. Actual value is negotiated with the server.
+   * @default 4096 */
   frameMax?: number,
-  /** (default=60) Period of time, in seconds, after which the TCP connection
+  /** Period of time, in seconds, after which the TCP connection
    * should be considered unreachable. Server may have its own max value, in
    * which case the lowest of the two is used. A value of 0 will disable this
    * feature. Heartbeats are sent every `heartbeat / 2` seconds, so two missed
-   * heartbeats means the connection is dead. */
+   * heartbeats means the connection is dead.
+   * @default 60 */
   heartbeat?: number,
-  /** (default=2047) Maximum active AMQP channels. 65535 is the protocol max.
+  /** Maximum active AMQP channels. 65535 is the protocol max.
    * The server may also have a max value, in which case the lowest of the two
-   * is used. */
+   * is used.
+   * @default 2047 */
   maxChannels?: number,
-  /** (default=30000) Max delay, in milliseconds, for exponential-backoff when reconnecting */
+  /** Max delay, in milliseconds, for exponential-backoff when reconnecting
+   * @default 30_000 */
   retryHigh?: number,
-  /** (default=1000) Step size, in milliseconds, for exponential-backoff when reconnecting */
+  /** Step size, in milliseconds, for exponential-backoff when reconnecting
+   * @default 1000*/
   retryLow?: number,
 
-  /**
-   * (default=amqp://guest:guest@localhost:5672)
-   * May also include params: heartbeat, connection_timeout, channel_max
+  /** May also include params: heartbeat, connection_timeout, channel_max
+   * @default "amqp://guest:guest@localhost:5672"
    */
   url?: string,
 

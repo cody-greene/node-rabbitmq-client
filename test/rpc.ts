@@ -1,5 +1,5 @@
 import test from 'tape'
-import Connection from '../src'
+import Connection, {ConsumerHandler} from '../src'
 import {expectEvent} from '../src/util'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
@@ -80,5 +80,60 @@ test('rpc failure modes', async (t) => {
 
   await server.close()
   await client.close()
+  await rabbit.close()
+})
+
+test('rpc retry (maxAttempts)', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+
+  const request = Symbol('request')
+  const queue = '__test_f6ad3342820fb0c7'
+  const server = rabbit.createConsumer({queue, queueOptions: {exclusive: true}}, (msg, reply) => {
+    server.emit(request, [msg, reply])
+  })
+  await expectEvent(server, 'ready')
+
+  const client = rabbit.createRPCClient({confirm: true, maxAttempts: 2, timeout: 50})
+
+  // 1 success
+  const [res1] = await Promise.all([
+    client.send(queue, 'ping'),
+    expectEvent<Parameters<ConsumerHandler>>(server, request)
+      .then(([msg, reply]) => reply('pong'))
+  ])
+  t.equal(res1.body, 'pong')
+  t.equal(res1.correlationId, '1')
+
+  // 1 fail, 1 success
+  const [res2] = await Promise.all([
+    client.send(queue, 'pong'),
+    (async () => {
+      await expectEvent<Parameters<ConsumerHandler>>(server, request)
+      // ignore msg2
+      const [, reply3] = await expectEvent<Parameters<ConsumerHandler>>(server, request)
+      await reply3('pong')
+    })()
+  ])
+  t.equal(res2.body, 'pong')
+  t.equal(res2.correlationId, '3', 'success on 2nd try')
+
+  // 2 fail
+  const [res3] = await Promise.allSettled([
+    client.send(queue, 'pong'),
+    (async () => {
+      const [msg4] = await expectEvent<Parameters<ConsumerHandler>>(server, request)
+      t.equal(msg4.correlationId, '4')
+      const [msg5] = await expectEvent<Parameters<ConsumerHandler>>(server, request)
+      t.equal(msg5.correlationId, '5')
+    })()
+  ])
+  if (res3.status === 'rejected') {
+    t.equal(res3.reason.code, 'RPC_TIMEOUT', 'timeout on 2nd try')
+  } else {
+    t.fail('expected an error')
+  }
+
+  await client.close()
+  await server.close()
   await rabbit.close()
 })

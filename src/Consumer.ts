@@ -1,15 +1,15 @@
 import EventEmitter from 'node:events'
-import {READY_STATE, AsyncMessage, MethodParams, MessageBody, Envelope} from './types'
-import type Channel from './Channel'
-import type Connection from './Connection'
-import {expBackoff, expectEvent} from './util'
+import type {AsyncMessage, MethodParams, MessageBody, Envelope, Cmd} from './codec'
+import type {Channel} from './Channel'
+import type {Connection} from './Connection'
+import {READY_STATE, expBackoff, expectEvent} from './util'
 
 /** @internal */
 export const IDLE_EVENT = Symbol('idle')
 /** @internal */
 export const PREFETCH_EVENT = Symbol('prefetch')
 
-type BasicConsumeParams = MethodParams['basic.consume']
+type BasicConsumeParams = MethodParams[Cmd.BasicConsume]
 export interface ConsumerProps extends BasicConsumeParams {
   /** Non-zero positive integer. Maximum number of messages to process at once.
    * Should be less than or equal to "qos.prefetchCount". Any prefetched, but
@@ -17,36 +17,40 @@ export interface ConsumerProps extends BasicConsumeParams {
    * (unless noAck=true, when every received message will be processed).
    * @default Infinity */
   concurrency?: number,
-  /** (default=true) Requeue message when the handler throws an Error (see
-   * {@link Channel.basicNack}) */
+  /** Requeue message when the handler throws an Error
+   * (as with {@link Channel.basicNack})
+   * @default true */
   requeue?: boolean,
   /** Additional options when declaring the queue just before creating the
    * consumer and whenever the connection is reset. */
-  queueOptions?: Omit<MethodParams['queue.declare'], 'queue' | 'nowait'>,
+  queueOptions?: MethodParams[Cmd.QueueDeclare],
   /** If defined, basicQos() is invoked just before creating the consumer and
    * whenever the connection is reset */
-  qos?: MethodParams['basic.qos'],
+  qos?: MethodParams[Cmd.BasicQos],
   /** Any exchanges to be declared before the consumer and whenever the
-   * connection is reset */
-  exchanges?: Array<MethodParams['exchange.declare']>
+   * connection is reset. See {@link Channel.exchangeDeclare} */
+  exchanges?: Array<MethodParams[Cmd.ExchangeDeclare]>
   /** Any queue-exchange bindings to be declared before the consumer and
-   * whenever the connection is reset. */
-  queueBindings?: Array<MethodParams['queue.bind']>
+   * whenever the connection is reset. See {@link Channel.queueBind} */
+  queueBindings?: Array<MethodParams[Cmd.QueueBind]>
   /** Any exchange-exchange bindings to be declared before the consumer and
-   * whenever the connection is reset. */
-  exchangeBindings?: Array<MethodParams['exchange.bind']>
+   * whenever the connection is reset. See {@link Channel.exchangeBind} */
+  exchangeBindings?: Array<MethodParams[Cmd.ExchangeBind]>
 }
 
-export type ReplyFN = (body: MessageBody, envelope?: Envelope) => Promise<void>
 /**
  * @param msg The incoming message
- * @param reply Reply to an RPC-type message. Like basicPublish() but the
- * message body comes first. Some fields are also set automaticaly:
- * routingKey=msg.replyTo, exchange='', correlationId=msg.correlationId
+ * @param reply Reply to an RPC-type message. Like {@link Channel#basicPublish | Channel#basicPublish()}
+ *              but the message body comes first. Some fields are also set automaticaly:
+ * - routingKey = msg.replyTo
+ * - exchange = ""
+ * - correlationId = msg.correlationId
  */
-export type ConsumerHandler = (msg: AsyncMessage, reply: ReplyFN) => Promise<void>|void
+export interface ConsumerHandler {
+  (msg: AsyncMessage, reply: (body: MessageBody, envelope?: Envelope) => Promise<void>): Promise<void>|void
+}
 
-declare interface Consumer {
+export declare interface Consumer {
   /** The consumer is successfully (re)created */
   on(name: 'ready', cb: () => void): this;
   /** Errors are emitted if a message handler fails, or if channel setup fails,
@@ -55,15 +59,19 @@ declare interface Consumer {
 }
 
 /**
- * See {@link Connection.createConsumer} & {@link ConsumerProps} & {@link ConsumerHandler}
+ * @see {@link Connection#createConsumer | Connection#createConsumer()}
+ * @see {@link ConsumerProps}
+ * @see {@link ConsumerHandler}
  *
  * This will create a dedicated Channel, declare a queue, declare exchanges,
  * declare bindings, establish QoS, and finally start consuming messages. If
  * the connection is reset, then all of this setup will re-run on a new
  * Channel. This uses the same retry-delay logic as the Connection.
  *
- * The handler is called for each incoming message. If it throws an error or
- * returns a rejected Promise then the message is rejected with "basic.nack"
+ * The callback is called for each incoming message. If it throws an error or
+ * returns a rejected Promise then the message is NACK'd (rejected) and
+ * possibly requeued, or sent to a dead-letter exchange. Otherwise the message
+ * is automatically ACK'd and removed from the queue.
  *
  * About concurency: For best performance, you'll likely want to start with
  * concurrency=X and qos.prefetchCount=2X. In other words, up to 2X messages
@@ -80,26 +88,31 @@ declare interface Consumer {
  * This is an EventEmitter that may emit errors. Also, since this wraps a
  * Channel, this must be closed before closing the Connection.
  *
+ * @example
  * ```
- * const consumer = rabbit.createConsumer({queue: 'my-queue'}, async (msg, reply) => {
+ * const sub = rabbit.createConsumer({queue: 'my-queue'}, async (msg, reply) => {
  *   console.log(msg)
  *   // ... do some work ...
  *   // optionally reply to an RPC-type message
  *   await reply('my-response-data')
  * })
  *
+ * sub.on('error', (err) => {
+ *   console.log('consumer error (my-queue)', err)
+ * })
+ *
  * // when closing the application
- * await consumer.close()
+ * await sub.close()
  * ```
  */
-class Consumer extends EventEmitter {
+export class Consumer extends EventEmitter {
   /** Maximum number of messages to process at once. Non-zero positive integer.
    * Writeable. */
   concurrency: number
   /** Get current queue name. If the queue name was left blank in
    * ConsumerProps, then this will change whenever the channel is reset, as the
    * name is randomly generated. */
-  queue = ''
+  get queue() { return this._queue }
   /** Get the current consumer ID. If generated by the broker, then this will
    * change each time the consumer is ready. */
   get consumerTag() { return this._consumerTag }
@@ -112,6 +125,8 @@ class Consumer extends EventEmitter {
   _handler: ConsumerHandler
   /** @internal */
   _props: ConsumerProps
+  /** @internal */
+  _queue = ''
   /** @internal */
   _consumerTag = ''
   /** @internal */
@@ -141,8 +156,8 @@ class Consumer extends EventEmitter {
   }
 
   /** @internal */
-  private _makeReplyfn(req: AsyncMessage): ReplyFN {
-    return (body, envelope) => {
+  private _makeReplyfn(req: AsyncMessage) {
+    return (body: MessageBody, envelope?: Envelope) => {
       if (!req.replyTo)
         throw new Error('attempted to reply to a non-RPC message')
       return this._ch!.basicPublish({
@@ -221,7 +236,7 @@ class Consumer extends EventEmitter {
       })
     }
     const {queue} = await ch.queueDeclare({...props.queueOptions, queue: props.queue})
-    this.queue = queue
+    this._queue = queue
     if (props.exchanges) for (const params of props.exchanges) {
       await ch.exchangeDeclare(params)
     }
@@ -290,7 +305,7 @@ class Consumer extends EventEmitter {
    */
   private _reconnect() {
     this._consumerTag = ''
-    this.queue = ''
+    this._queue = ''
     if (this._conn._state.readyState >= READY_STATE.CLOSING || this._retryTimer || this._pendingSetup)
       return
     const {retryLow, retryHigh} = this._conn._opt
@@ -331,5 +346,3 @@ class Consumer extends EventEmitter {
     this._readyState = READY_STATE.CLOSED
   }
 }
-
-export default Consumer

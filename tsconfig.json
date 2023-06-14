@@ -1,16 +1,18 @@
 {
   "compilerOptions": {
+    "module": "CommonJS",
+    "lib": ["es2021"],
+    "target": "ES2022",
+
     "declaration": true,
     "downlevelIteration": true,
     "esModuleInterop": true,
     "isolatedModules": true,
-    "module": "CommonJS",
     "outDir": "lib",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,
     "stripInternal": true,
-    "target": "ES2020",
     "types": ["node"],
     "useUnknownInCatchVariables": false
   }

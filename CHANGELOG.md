@@ -1,3 +1,22 @@
+# v4.0.0
+BREAKING CHANGES:
+- dropped node 14 (EOL 2023-04-30)
+- `MethodParams` is indexed by an enum rather than a string, e.g.
+  `MethodParams['basic.ack'] -> MethodParams[Cmd.BasicAck]`
+- removed `nowait` from type definitions
+- fixed typo on exported type def: RPCCLient -> RPCClient
+
+Features:
+- Rename `Publisher.publish() -> .send()` and `RPCClient.publish() -> .send()`
+  the old method still exists as an alias, for now (deprecated)
+- Added a few method overloads for: basicPublish, basicCancel, queueDeclare,
+  queueDelete, queuePurge
+- Documentation improvements: more examples, clarifications
+- RPCClient supports retries `new RPCClient({maxAttempts: 2})`
+- Better stack traces. When `Publisher#send()` fails, due to an undeclared
+  exchange for example, the stack trace now includes your application code,
+  rather than the async internals of this library.
+
 # v3.3.2
 - fix: better heartbeats [#13](https://github.com/cody-greene/node-rabbitmq-client/pull/13)
 

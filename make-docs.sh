@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
 # Generate HTML documentation and commit to the gh-pages branch
+# View with: python -m http.server -d docs 8000
 #
 ## Release Steps
 # update package.json with version=$ver
 # npm publish --dry-run
 # git tag v$ver
 # ./make-docs.sh
-# git push origin master gh-pages
+# git push origin master gh-pages v$ver
 # npm publish
 #
 set -e
 
-node_modules/.bin/typedoc src/index.ts \
-  --tsconfig tsconfig.build.json \
-  --treatWarningsAsErrors \
-  --includeVersion \
-  --excludeExternals \
-  --out docs
+# typedoc.json
+node -r ts-node/register/transpile-only node_modules/.bin/typedoc
 
 #########
 # Alternative to "git subtree push --prefix"
@@ -45,6 +42,6 @@ grease() {
   echo "  git update-ref $TARGET_BRANCH $TARGET_BRANCH~"
 }
 
-version=$(git describe --long --tags --dirty)
-read -p "Commit to gh-pages as $version? Press key to continue.. " -n1 -s
-grease gh-pages docs "$version"
+lver=$(git describe --long --tags --dirty)
+read -p "Commit to gh-pages as $lver? Press key to continue.. " -n1 -s
+grease gh-pages docs "$lver"
