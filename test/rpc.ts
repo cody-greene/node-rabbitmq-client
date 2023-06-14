@@ -1,7 +1,6 @@
 import test from 'tape'
 import Connection, {ConsumerHandler} from '../src'
 import {expectEvent} from '../src/util'
-import {AsyncMessage} from '../lib'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 
