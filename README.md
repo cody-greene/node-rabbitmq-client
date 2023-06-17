@@ -99,6 +99,8 @@ async function onShutdown() {
   await sub.close()
   await rabbit.close()
 }
+process.on('SIGINT', onShutdown)
+process.on('SIGTERM', onShutdown)
 ```
 
 ## Connection.createConsumer() vs Channel.basicConsume()
