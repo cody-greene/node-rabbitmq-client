@@ -47,7 +47,16 @@ export interface ConsumerProps extends BasicConsumeParams {
  * - correlationId = msg.correlationId
  */
 export interface ConsumerHandler {
-  (msg: AsyncMessage, reply: (body: MessageBody, envelope?: Envelope) => Promise<void>): Promise<void>|void
+  (msg: AsyncMessage, reply: (body: MessageBody, envelope?: Envelope) => Promise<void>): Promise<ConsumerReturnCode|void>|ConsumerReturnCode|void
+}
+
+export enum ConsumerReturnCode {
+  /** BasicAck */
+  OK = 0,
+  /** BasicNack(requeue=true). The message is returned to the queue. */
+  REQUEUE = 1,
+  /** BasicNack(requeue=false). The message is dropped and possibly dead-lettered. */
+  DROP = 2,
 }
 
 export declare interface Consumer {
@@ -93,8 +102,16 @@ export declare interface Consumer {
  * const sub = rabbit.createConsumer({queue: 'my-queue'}, async (msg, reply) => {
  *   console.log(msg)
  *   // ... do some work ...
+ *
  *   // optionally reply to an RPC-type message
  *   await reply('my-response-data')
+ *
+ *   // optionally return a status code
+ *   // 0 or undefined - ack
+ *   // 1              - nack(requeue=true)
+ *   // 2              - nack(requeue=false)
+ *   // An enum type is provided for convenience
+ *   return ConsumerReturnCode.OK // 0
  * })
  *
  * sub.on('error', (err) => {
@@ -175,16 +192,23 @@ export class Consumer extends EventEmitter {
     const {_ch: ch} = this
     if (!ch) return // satisfy the type checker but this should never happen
     try {
+      let retval
       try {
-        await this._handler(msg, this._makeReplyfn(msg))
+        retval = await this._handler(msg, this._makeReplyfn(msg))
       } catch (err) {
         if (!this._props.noAck)
           ch.basicNack({deliveryTag: msg.deliveryTag, requeue: this._props.requeue})
         this.emit('error', err)
         return
       }
-      if (!this._props.noAck)
-        ch.basicAck({deliveryTag: msg.deliveryTag})
+      if (!this._props.noAck) {
+        if (retval === ConsumerReturnCode.DROP)
+          ch.basicNack({deliveryTag: msg.deliveryTag, requeue: false})
+        else if (retval === ConsumerReturnCode.REQUEUE)
+          ch.basicNack({deliveryTag: msg.deliveryTag, requeue: true})
+        else
+          ch.basicAck({deliveryTag: msg.deliveryTag})
+      }
     } catch (err) {
       // ack/nack can fail if the connection dropped
       err.message = 'failed to ack/nack message; ' + err.message
