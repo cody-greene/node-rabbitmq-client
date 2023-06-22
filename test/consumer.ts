@@ -1,8 +1,8 @@
 import test from 'tape'
-import Connection, {AsyncMessage} from '../src'
+import Connection, {AsyncMessage, ConsumerReturnCode} from '../src'
 import {PREFETCH_EVENT} from '../src/Consumer'
 import {expectEvent, createDeferred, Deferred} from '../src/util'
-import {sleep} from './util'
+import {sleep, createIterableConsumer} from './util'
 
 type TMParams = [Deferred<void>, AsyncMessage]
 
@@ -283,5 +283,66 @@ test('Consumer concurrency with noAck=true', async (t) => {
 
   await consumerClosed
   await ch.close()
+  await rabbit.close()
+})
+
+test('Consumer return codes', async (t) => {
+  type MsgEvent = [AsyncMessage, Deferred<ConsumerReturnCode>]
+  const rabbit = new Connection(RABBITMQ_URL)
+  const queue = '__test_03f0726440598228'
+  const deadqueue = '__test_fadb49f36193d615'
+  const exchange = '__test_db6d7203284a44c2'
+  const msgevt = Symbol('msgevent')
+  const sub = rabbit.createConsumer({
+    queue,
+    requeue: false,
+    queueOptions: {
+      exclusive: true,
+      arguments: {'x-dead-letter-exchange': exchange}
+    },
+  }, (msg) => {
+    const dfd = createDeferred<ConsumerReturnCode>()
+    sub.emit(msgevt, [msg, dfd] as MsgEvent)
+    return dfd.promise
+  })
+  const dead = createIterableConsumer(rabbit, {
+    queue: deadqueue,
+    queueOptions: {exclusive: true},
+    queueBindings: [{exchange, routingKey: queue}],
+    exchanges: [{exchange, type: 'fanout', autoDelete: true}]
+  })
+
+  await expectEvent(sub, 'ready')
+  await expectEvent(dead, 'ready')
+  const ch = await rabbit.acquire()
+
+  // can drop by default
+  await ch.basicPublish(queue, 'red')
+  const [msg1, dfd1] = await expectEvent<MsgEvent>(sub, msgevt)
+  t.equal(msg1.redelivered, false)
+  dfd1.reject(new Error('expected'))
+  const err = await expectEvent(sub, 'error')
+  t.equal(err.message, 'expected')
+  const [msg2, dfd2] = await dead.read()
+  t.equal(msg2.body, 'red', 'got dead-letter')
+  dfd2.resolve()
+
+  // can selectively requeue
+  await ch.basicPublish(queue, 'blue')
+  const [msg3, dfd3] = await expectEvent<MsgEvent>(sub, msgevt)
+  t.equal(msg3.redelivered, false)
+  dfd3.resolve(ConsumerReturnCode.REQUEUE)
+  const [msg4, dfd4] = await expectEvent<MsgEvent>(sub, msgevt)
+  t.equal(msg4.redelivered, true, 'msg redelivered')
+
+  // can explicitly drop
+  dfd4.resolve(ConsumerReturnCode.DROP)
+  const [msg5, dfd5] = await dead.read()
+  t.equal(msg5.body, 'blue', 'message dropped')
+  dfd5.resolve()
+
+  await ch.close()
+  await sub.close()
+  await dead.close()
   await rabbit.close()
 })

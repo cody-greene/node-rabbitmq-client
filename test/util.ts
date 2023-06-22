@@ -1,6 +1,8 @@
 import {Socket, createServer} from 'node:net'
 import {DataFrame, decodeFrame} from '../src/codec'
-import {expectEvent, createAsyncReader} from '../src/util'
+import {expectEvent, createAsyncReader, createDeferred, Deferred} from '../src/util'
+import Connection, {ConsumerProps, AsyncMessage} from '../src'
+import {PassThrough} from 'node:stream'
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -49,4 +51,42 @@ async function useFakeServer(cb: ConnectionCallback|Array<ConnectionCallback>) {
   return [addr.port, server] as const
 }
 
-export {useFakeServer, sleep}
+function createIterableConsumer(rabbit: Connection, opt: ConsumerProps) {
+  const stream = new PassThrough({objectMode: true})
+  const sub = rabbit.createConsumer(opt, (msg) => {
+    const dfd = createDeferred()
+    stream.write([msg, dfd])
+    return dfd.promise
+  })
+  let cb: undefined | ((err: any, chunk: [AsyncMessage, Deferred<number|void>]) => void)
+  const _read = () => {
+    if (!cb) return
+    const chunk = stream.read()
+    if (!chunk && stream.readable) return
+    cb(null, chunk)
+  }
+  stream.on('close', _read)
+  stream.on('readable', _read)
+
+  const close = sub.close.bind(sub)
+  return Object.assign(sub, {
+    [Symbol.asyncIterator]() {
+      return stream[Symbol.asyncIterator]()
+    },
+    read(): Promise<[AsyncMessage, Deferred<number|void>]> {
+      return new Promise((resolve, reject) => {
+        cb = (err, chunk) => {
+          if (err) reject(err)
+          else resolve(chunk)
+        }
+        _read()
+      })
+    },
+    close() {
+      stream.destroy()
+      return close()
+    }
+  })
+}
+
+export {useFakeServer, sleep, createIterableConsumer}

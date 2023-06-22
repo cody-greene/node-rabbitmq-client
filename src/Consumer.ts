@@ -79,8 +79,15 @@ export declare interface Consumer {
  *
  * The callback is called for each incoming message. If it throws an error or
  * returns a rejected Promise then the message is NACK'd (rejected) and
- * possibly requeued, or sent to a dead-letter exchange. Otherwise the message
- * is automatically ACK'd and removed from the queue.
+ * possibly requeued, or sent to a dead-letter exchange. The callback can also
+ * return a numeric status code to control the ACK/NACK behavior. The
+ * {@link ConsumerReturnCode} enum is provided for convenience.
+ *
+ * ACK/NACK behavior when the callback:
+ * - throws an error - BasicNack(requeue=ConsumerProps.requeue)
+ * - returns 0 or undefined - BasicAck
+ * - returns 1 - BasicNack(requeue=true)
+ * - returns 2 - BasicNack(requeue=false)
  *
  * About concurency: For best performance, you'll likely want to start with
  * concurrency=X and qos.prefetchCount=2X. In other words, up to 2X messages
@@ -107,10 +114,6 @@ export declare interface Consumer {
  *   await reply('my-response-data')
  *
  *   // optionally return a status code
- *   // 0 or undefined - ack
- *   // 1              - nack(requeue=true)
- *   // 2              - nack(requeue=false)
- *   // An enum type is provided for convenience
  *   return ConsumerReturnCode.OK // 0
  * })
  *
