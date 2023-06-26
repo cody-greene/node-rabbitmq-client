@@ -47,15 +47,16 @@ export interface ConsumerProps extends BasicConsumeParams {
  * - correlationId = msg.correlationId
  */
 export interface ConsumerHandler {
-  (msg: AsyncMessage, reply: (body: MessageBody, envelope?: Envelope) => Promise<void>): Promise<ConsumerReturnCode|void>|ConsumerReturnCode|void
+  (msg: AsyncMessage, reply: (body: MessageBody, envelope?: Envelope) => Promise<void>): Promise<ConsumerStatus|void>|ConsumerStatus|void
 }
 
-export enum ConsumerReturnCode {
+export enum ConsumerStatus {
   /** BasicAck */
-  OK = 0,
+  ACK = 0,
   /** BasicNack(requeue=true). The message is returned to the queue. */
   REQUEUE = 1,
-  /** BasicNack(requeue=false). The message is dropped and possibly dead-lettered. */
+  /** BasicNack(requeue=false). The message is sent to the
+   * configured dead-letter exchange, if any, or discarded. */
   DROP = 2,
 }
 
@@ -77,11 +78,11 @@ export declare interface Consumer {
  * the connection is reset, then all of this setup will re-run on a new
  * Channel. This uses the same retry-delay logic as the Connection.
  *
- * The callback is called for each incoming message. If it throws an error or
- * returns a rejected Promise then the message is NACK'd (rejected) and
- * possibly requeued, or sent to a dead-letter exchange. The callback can also
- * return a numeric status code to control the ACK/NACK behavior. The
- * {@link ConsumerReturnCode} enum is provided for convenience.
+ * The callback is called for each incoming message. If it throws an error then
+ * the message is rejected (BasicNack) and possibly requeued, or sent to a
+ * dead-letter exchange. The error is then emitted as an event. The callback
+ * can also return a numeric status code to control the ACK/NACK behavior. The
+ * {@link ConsumerStatus} enum is provided for convenience.
  *
  * ACK/NACK behavior when the callback:
  * - throws an error - BasicNack(requeue=ConsumerProps.requeue)
@@ -114,7 +115,9 @@ export declare interface Consumer {
  *   await reply('my-response-data')
  *
  *   // optionally return a status code
- *   return ConsumerReturnCode.OK // 0
+ *   if (somethingBad) {
+ *     return ConsumerStatus.DROP
+ *   }
  * })
  *
  * sub.on('error', (err) => {
@@ -205,9 +208,9 @@ export class Consumer extends EventEmitter {
         return
       }
       if (!this._props.noAck) {
-        if (retval === ConsumerReturnCode.DROP)
+        if (retval === ConsumerStatus.DROP)
           ch.basicNack({deliveryTag: msg.deliveryTag, requeue: false})
-        else if (retval === ConsumerReturnCode.REQUEUE)
+        else if (retval === ConsumerStatus.REQUEUE)
           ch.basicNack({deliveryTag: msg.deliveryTag, requeue: true})
         else
           ch.basicAck({deliveryTag: msg.deliveryTag})
