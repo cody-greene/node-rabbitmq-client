@@ -1,8 +1,8 @@
 import test from 'tape'
-import Connection, {AsyncMessage} from '../src'
+import Connection, {AsyncMessage, ConsumerStatus} from '../src'
 import {PREFETCH_EVENT} from '../src/Consumer'
 import {expectEvent, createDeferred, Deferred} from '../src/util'
-import {sleep} from './util'
+import {sleep, createIterableConsumer} from './util'
 
 type TMParams = [Deferred<void>, AsyncMessage]
 
@@ -283,5 +283,60 @@ test('Consumer concurrency with noAck=true', async (t) => {
 
   await consumerClosed
   await ch.close()
+  await rabbit.close()
+})
+
+test('Consumer return codes', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const queue = '__test_03f0726440598228'
+  const deadqueue = '__test_fadb49f36193d615'
+  const exchange = '__test_db6d7203284a44c2'
+  const sub = createIterableConsumer(rabbit, {
+    queue,
+    requeue: false,
+    queueOptions: {
+      exclusive: true,
+      arguments: {'x-dead-letter-exchange': exchange}
+    },
+  })
+  const dead = createIterableConsumer(rabbit, {
+    queue: deadqueue,
+    queueOptions: {exclusive: true},
+    queueBindings: [{exchange, routingKey: queue}],
+    exchanges: [{exchange, type: 'fanout', autoDelete: true}]
+  })
+
+  await expectEvent(sub, 'ready')
+  await expectEvent(dead, 'ready')
+  const ch = await rabbit.acquire()
+
+  // can drop by default
+  await ch.basicPublish(queue, 'red')
+  const msg1 = await sub.read()
+  t.equal(msg1.redelivered, false)
+  msg1.reject(new Error('expected'))
+  const err = await expectEvent(sub, 'error')
+  t.equal(err.message, 'expected')
+  const msg2 = await dead.read()
+  t.equal(msg2.body, 'red', 'got dead-letter')
+  msg2.resolve()
+
+  // can selectively requeue
+  await ch.basicPublish(queue, 'blue')
+  const msg3 = await sub.read()
+  t.equal(msg3.redelivered, false)
+  msg3.resolve(ConsumerStatus.REQUEUE)
+  const msg4 = await sub.read()
+  t.equal(msg4.redelivered, true, 'msg redelivered')
+
+  // can explicitly drop
+  msg4.resolve(ConsumerStatus.DROP)
+  const msg5 = await dead.read()
+  t.equal(msg5.body, 'blue', 'message dropped')
+  msg5.resolve()
+
+  await ch.close()
+  await sub.close()
+  await dead.close()
   await rabbit.close()
 })

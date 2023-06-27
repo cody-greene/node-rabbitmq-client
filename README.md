@@ -61,9 +61,11 @@ const sub = rabbit.createConsumer({
   queueBindings: [{exchange: 'my-events', routingKey: 'users.*'}],
 }, async (msg) => {
   console.log('received message (user-events)', msg)
-  // The message is automatically acknowledged when this function ends.
-  // If this function throws an error, then msg is NACK'd (rejected) and
-  // possibly requeued or sent to a dead-letter exchange
+  // The message is automatically acknowledged (BasicAck) when this function ends.
+  // If this function throws an error, then msg is rejected (BasicNack) and
+  // possibly requeued or sent to a dead-letter exchange. You can also return a
+  // status code from this callback to control the ack/nack behavior
+  // per-message.
 })
 
 sub.on('error', (err) => {

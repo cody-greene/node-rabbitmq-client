@@ -1,3 +1,6 @@
+# v4.1.0
+- feat: Consumer return code [#21](https://github.com/cody-greene/node-rabbitmq-client/pull/21)
+
 # v4.0.0
 BREAKING CHANGES:
 - dropped node 14 (EOL 2023-04-30)
