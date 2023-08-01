@@ -577,7 +577,7 @@ export class Channel extends EventEmitter {
   basicGet(queue?: string): Promise<undefined|SyncMessage>
   /** @ignore */
   basicGet(params?: string|MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage>
-  basicGet(params?: string|MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage> {
+  basicGet(params: string|MethodParams[Cmd.BasicGet] = ''): Promise<undefined|SyncMessage> {
     if (typeof params == 'string') {
       params = {queue: params}
     }

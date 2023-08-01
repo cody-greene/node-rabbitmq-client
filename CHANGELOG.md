@@ -1,3 +1,6 @@
+# v4.2.0
+- [#29](https://github.com/cody-greene/node-rabbitmq-client/pull/29) Added some management methods to the top-level Connection interface. You can create/delete queues, exchanges, and bindings. A special channel is implicitly created and maintained internally, so you don't have to worry about it.
+
 # v4.1.0
 - feat: Consumer return code [#21](https://github.com/cody-greene/node-rabbitmq-client/pull/21)
 
