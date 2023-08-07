@@ -572,8 +572,15 @@ export class Channel extends EventEmitter {
   basicAck(params: MethodParams[Cmd.BasicAck]): void {
     return this._invokeNowait(Cmd.BasicAck, params)
   }
-  /** Request a single message from a queue */
-  basicGet(params: MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage> {
+  /** Request a single message from a queue. Useful for testing. */
+  basicGet(params: MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage>
+  basicGet(queue?: string): Promise<undefined|SyncMessage>
+  /** @ignore */
+  basicGet(params?: string|MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage>
+  basicGet(params: string|MethodParams[Cmd.BasicGet] = ''): Promise<undefined|SyncMessage> {
+    if (typeof params == 'string') {
+      params = {queue: params}
+    }
     return this._invoke(Cmd.BasicGet, Cmd.BasicGetOK, {...params, rsvp1: 0})
   }
   /** Reject one or more incoming messages. */
@@ -637,7 +644,7 @@ export class Channel extends EventEmitter {
   queueDelete(params: MethodParams[Cmd.QueueDelete]): Promise<MethodParams[Cmd.QueueDeleteOK]>
   queueDelete(queue?: string): Promise<MethodParams[Cmd.QueueDeleteOK]>
   /** @ignore */
-  queueDelete(params: string|MethodParams[Cmd.QueueDelete]): Promise<MethodParams[Cmd.QueueDeleteOK]>
+  queueDelete(params?: string|MethodParams[Cmd.QueueDelete]): Promise<MethodParams[Cmd.QueueDeleteOK]>
   queueDelete(params: string|MethodParams[Cmd.QueueDelete] = ''): Promise<MethodParams[Cmd.QueueDeleteOK]> {
     if (typeof params == 'string') {
       params = {queue: params}
@@ -650,7 +657,7 @@ export class Channel extends EventEmitter {
   queuePurge(queue?: string): Promise<MethodParams[Cmd.QueuePurgeOK]>
   queuePurge(params: MethodParams[Cmd.QueuePurge]): Promise<MethodParams[Cmd.QueuePurgeOK]>
   /** @ignore */
-  queuePurge(params: string|MethodParams[Cmd.QueuePurge]): Promise<MethodParams[Cmd.QueuePurgeOK]>
+  queuePurge(params?: string|MethodParams[Cmd.QueuePurge]): Promise<MethodParams[Cmd.QueuePurgeOK]>
   queuePurge(params: string|MethodParams[Cmd.QueuePurge] = ''): Promise<MethodParams[Cmd.QueuePurgeOK]> {
     if (typeof params == 'string') {
       params = {queue: params}

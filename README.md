@@ -129,8 +129,25 @@ The `Consumer` & `Publisher` interfaces abstract all of that away by running
 the necessary setup as needed and handling all the edge-cases for you.
 
 ## Managing queues & exchanges
-The basic RabbitMQ methods are available on the `Channel` interface for
-creating/deleting queues, exchanges, or bindings, etc:
+A number of management methods are available on the `Connection` interface; you
+can create/delete queues, exchanges, or bindings between them. It's generally
+safer to do this declaratively with a Consumer or Publisher. But maybe you
+just want to do something once.
+
+```javascript
+const rabbit = new Connection()
+
+await rabbit.queueDeclare({queue: 'my-queue', exclusive: true})
+
+await rabbit.exchangeDeclare({queue: 'my-queue', exchange: 'my-exchange', type: 'topic'})
+
+await rabbit.queueBind({queue: 'my-queue', exchange: 'my-exchange'})
+
+const {messageCount} = await rabbit.queueDeclare({queue: 'my-queue', passive: true})
+```
+
+And if you really want to, you can acquire a raw AMQP Channel but this should
+be a last resort.
 
 ```javascript
 // Will wait for the connection to establish and then create a Channel
@@ -141,22 +158,8 @@ ch.on('close', () => {
   console.log('channel was closed')
 })
 
-// Create a queue for the duration of this connection
-await ch.queueDeclare({queue: 'my-queue'})
-
-// Enable publisher acknowledgements
-await ch.confirmSelect()
-
-const data = {title: 'just some object'}
-
-// Resolves when the data has been flushed through the socket or if
-// ch.confirmSelect() was called: will wait for an acknowledgement
-await ch.basicPublish({routingKey: 'my-queue'}, data)
-
 const msg = ch.basicGet('my-queue')
 console.log(msg)
-
-await ch.queueDelete('my-queue')
 
 // It's your responsibility to close any acquired channels
 await ch.close()

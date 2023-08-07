@@ -16,7 +16,8 @@ import {
   Envelope,
   MessageBody,
   ReturnedMessage,
-  ReplyCode
+  ReplyCode,
+  SyncMessage
 } from './codec'
 import {Channel} from './Channel'
 import normalizeOptions, {ConnectionOptions} from './normalize'
@@ -105,6 +106,7 @@ export class Connection extends EventEmitter {
     /** Sent data since last heartbeat */
     hasWrite?: boolean,
     hostIndex: number,
+    lazyChannel?: Channel|Promise<Channel>,
     retryCount: number,
     retryTimer?: NodeJS.Timeout,
     connectionTimer?: NodeJS.Timeout,
@@ -195,6 +197,11 @@ export class Connection extends EventEmitter {
     }
 
     this._state.readyState = READY_STATE.CLOSING
+    if (this._state.lazyChannel instanceof Promise) {
+      this._state.lazyChannel.then(ch => ch.close())
+    } else if (this._state.lazyChannel) {
+      this._state.lazyChannel.close()
+    }
     this._checkEmpty()
     // wait for all channels to close
     await this._state.onEmpty.promise
@@ -574,6 +581,84 @@ export class Connection extends EventEmitter {
     if (!this._state.leased.size && this._state.readyState === READY_STATE.CLOSING)
       this._state.onEmpty.resolve()
   }
+
+  /** @internal */
+  async _lazy(): Promise<Channel> {
+    let ch = this._state.lazyChannel
+    if (ch instanceof Promise) {
+      return ch
+    }
+    if (ch == null || !ch.active) {
+      return this._state.lazyChannel = await (this._state.lazyChannel = this.acquire())
+    }
+    return ch
+  }
+
+  /** {@inheritDoc Channel#basicGet} */
+  basicGet(params: MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage>
+  basicGet(queue?: string): Promise<undefined|SyncMessage>
+  /** @ignore */
+  basicGet(params?: string|MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage>
+  basicGet(params?: string|MethodParams[Cmd.BasicGet]): Promise<undefined|SyncMessage> {
+    return this._lazy().then(ch => ch.basicGet(params))
+  }
+
+  /** {@inheritDoc Channel#queueDeclare} */
+  queueDeclare(params: MethodParams[Cmd.QueueDeclare]): Promise<MethodParams[Cmd.QueueDeclareOK]>
+  queueDeclare(queue?: string): Promise<MethodParams[Cmd.QueueDeclareOK]>
+  /** @ignore */
+  queueDeclare(params?: string|MethodParams[Cmd.QueueDeclare]): Promise<MethodParams[Cmd.QueueDeclareOK]>
+  queueDeclare(params?: string|MethodParams[Cmd.QueueDeclare]): Promise<MethodParams[Cmd.QueueDeclareOK]> {
+    return this._lazy().then(ch => ch.queueDeclare(params))
+  }
+
+  /** {@inheritDoc Channel#exchangeBind} */
+  exchangeBind(params: MethodParams[Cmd.ExchangeBind]): Promise<void> {
+    return this._lazy().then(ch => ch.exchangeBind(params))
+  }
+
+  /** {@inheritDoc Channel#exchangeDeclare} */
+  exchangeDeclare(params: MethodParams[Cmd.ExchangeDeclare]): Promise<void> {
+    return this._lazy().then(ch => ch.exchangeDeclare(params))
+  }
+
+  /** {@inheritDoc Channel#exchangeDelete} */
+  exchangeDelete(params: MethodParams[Cmd.ExchangeDelete]): Promise<void> {
+    return this._lazy().then(ch => ch.exchangeDelete(params))
+  }
+
+  /** {@inheritDoc Channel#exchangeUnbind} */
+  exchangeUnbind(params: MethodParams[Cmd.ExchangeUnbind]): Promise<void> {
+    return this._lazy().then(ch => ch.exchangeUnbind(params))
+  }
+
+  /** {@inheritDoc Channel#queueBind} */
+  queueBind(params: MethodParams[Cmd.QueueBind]): Promise<void> {
+    return this._lazy().then(ch => ch.queueBind(params))
+  }
+
+  /** {@inheritDoc Channel#queueDelete} */
+  queueDelete(params: MethodParams[Cmd.QueueDelete]): Promise<MethodParams[Cmd.QueueDeleteOK]>
+  queueDelete(queue?: string): Promise<MethodParams[Cmd.QueueDeleteOK]>
+  /** @ignore */
+  queueDelete(params?: string|MethodParams[Cmd.QueueDelete]): Promise<MethodParams[Cmd.QueueDeleteOK]>
+  queueDelete(params?: string|MethodParams[Cmd.QueueDelete]): Promise<MethodParams[Cmd.QueueDeleteOK]> {
+    return this._lazy().then(ch => ch.queueDelete(params))
+  }
+
+  /** {@inheritDoc Channel#queuePurge} */
+  queuePurge(queue?: string): Promise<MethodParams[Cmd.QueuePurgeOK]>
+  queuePurge(params: MethodParams[Cmd.QueuePurge]): Promise<MethodParams[Cmd.QueuePurgeOK]>
+  /** @ignore */
+  queuePurge(params?: string|MethodParams[Cmd.QueuePurge]): Promise<MethodParams[Cmd.QueuePurgeOK]>
+  queuePurge(params?: string|MethodParams[Cmd.QueuePurge]): Promise<MethodParams[Cmd.QueuePurgeOK]> {
+    return this._lazy().then(ch => ch.queuePurge(params))
+  }
+
+  /** {@inheritDoc Channel#queueUnbind} */
+  queueUnbind(params: MethodParams[Cmd.QueueUnbind]): Promise<void> {
+    return this._lazy().then(ch => ch.queueUnbind(params))
+  }
 }
 
 function determineHeartbeat(x: number, y: number): number {
@@ -639,13 +724,13 @@ export interface PublisherProps {
 export interface Publisher extends EventEmitter {
   /** @deprecated Alias for {@link Publisher#send} */
   publish(envelope: string|Envelope, body: MessageBody): Promise<void>;
-  /** {@inheritDoc Channel.basicPublish} */
+  /** {@inheritDoc Channel#basicPublish} */
   send(envelope: Envelope, body: MessageBody): Promise<void>;
   /** Send directly to a queue. Same as `send({routingKey: queue}, body)` */
   send(queue: string, body: MessageBody): Promise<void>;
   /** @ignore */
   send(envelope: string|Envelope, body: MessageBody): Promise<void>;
-  /** {@inheritDoc Channel.on:BASIC_RETURN} */
+  /** {@inheritDoc Channel#on:BASIC_RETURN} */
   on(name: 'basic.return', cb: (msg: ReturnedMessage) => void): this;
   /** See maxAttempts. Emitted each time a failed publish will be retried. */
   on(name: 'retry', cb: (err: any, envelope: Envelope, body: MessageBody) => void): this;

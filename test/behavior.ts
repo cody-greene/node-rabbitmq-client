@@ -767,6 +767,22 @@ test('out-of-order RPC', async (t) => {
   await rabbit.close()
 })
 
+test('lazy channel', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+
+  t.comment('can manage queues without explicitly creating a channel')
+  const {queue} = await rabbit.queueDeclare({exclusive: true})
+
+  t.comment('lazy channel can recover from errors')
+  const [res] = await Promise.allSettled([
+    rabbit.queueDeclare({queue: '6b5a171726e573d5', passive: true})
+  ])
+  t.equal(res.status === 'rejected' && res.reason.code, 'NOT_FOUND')
+  await rabbit.queueDeclare({queue, passive: true})
+
+  t.comment('lazy channel auto-closes')
+  await rabbit.close()
+})
+
 // TODO opt.frameMax
-// TODO frame errors / unexpected channel
 // TODO codec
