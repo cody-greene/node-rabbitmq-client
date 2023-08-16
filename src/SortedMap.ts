@@ -70,6 +70,18 @@ export default class SortedMap<K, V> implements Map<K, V> {
 
   get [Symbol.toStringTag]() { return 'SortedMap' }
 
+  /** Traverse keys, breadth-first */
+  *bfs() {
+    if (this._root === Node.NIL) return
+    let queue = [this._root]
+    while (queue.length) {
+      const next = queue.shift()!
+      yield next.key
+      if (next.left !== Node.NIL) queue.push(next.left)
+      if (next.right !== Node.NIL) queue.push(next.right)
+    }
+  }
+
   toString(): string {
     return `[${this[Symbol.toStringTag]} size:${this.size}]`
   }
@@ -296,12 +308,13 @@ export default class SortedMap<K, V> implements Map<K, V> {
     let child: Node<K, V>
     let parent: Node<K, V>
     if (node.left !== Node.NIL && node.right !== Node.NIL) {
-      // find the first child with a NIL left-pointer
+      // find the first child with a NIL left-pointer (in the right-hand tree)
       // this will replace the deleted node
       let next = node.right
-      while (next.left !== Node.NIL) next = node.left
+      while (next.left !== Node.NIL) next = next.left
 
       next.left = node.left
+      next.left.parent = next
       if (node === this._root) this._root = next
       else if (node === node.parent.left) node.parent.left = next
       else node.parent.right = next
@@ -315,7 +328,6 @@ export default class SortedMap<K, V> implements Map<K, V> {
         node.right.parent = next
       }
       next.parent = node.parent
-      node.left.parent = next
     } else {
       child = node.left === Node.NIL ? node.right : node.left // may be NIL
       parent = node.parent // may be NIL
