@@ -1,3 +1,6 @@
+# v4.3.0
+Consumers now track some simple statistics: total messages acknowledged/requeued/dropped, and the current number of prefetched messages. Find these values in the `consumer.stats` object.
+
 # v4.2.1
 fix: closing a channel (in a certain order) no longer causes a lockup
 

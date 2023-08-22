@@ -340,3 +340,37 @@ test('Consumer return codes', async (t) => {
   await dead.close()
   await rabbit.close()
 })
+
+test('Consumer stats', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const pub = rabbit.createPublisher({confirm: true})
+  const sub = createIterableConsumer(rabbit, {
+    queueOptions: {exclusive: true}
+  })
+
+  await expectEvent(sub, 'ready')
+
+  await Promise.all([
+    pub.send(sub.queue, null),
+    pub.send(sub.queue, null),
+  ])
+
+  const msg1 = await sub.read()
+  msg1.resolve(ConsumerStatus.ACK)
+
+  const msg2 = await sub.read()
+  msg2.resolve(ConsumerStatus.REQUEUE)
+
+  const msg3 = await sub.read()
+  msg3.resolve(ConsumerStatus.DROP)
+
+  await Promise.all([
+    pub.close(),
+    sub.close(),
+    rabbit.close(),
+  ])
+
+  t.equal(sub.stats.acknowledged, 1)
+  t.equal(sub.stats.requeued, 1)
+  t.equal(sub.stats.dropped, 1)
+})
