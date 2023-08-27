@@ -143,12 +143,14 @@ export class Consumer extends EventEmitter {
   readonly stats = {
     /** Total acknowledged messages */
     acknowledged: 0,
-    /** Total messages rejected with BasicNack(requeue=true) */
-    requeued: 0,
     /** Total messages rejected BasicNack(requeue=false) */
     dropped: 0,
+    /** Size of the queue when this consumer started */
+    initialMessageCount: 0,
     /** How many messages are in memory, waiting to be processed */
-    prefetched: 0
+    prefetched: 0,
+    /** Total messages rejected with BasicNack(requeue=true) */
+    requeued: 0,
   }
 
   /** @internal */
@@ -282,7 +284,8 @@ export class Consumer extends EventEmitter {
         //this.emit('error', err)
       })
     }
-    const {queue} = await ch.queueDeclare({...props.queueOptions, queue: props.queue})
+    const {queue, messageCount} = await ch.queueDeclare({...props.queueOptions, queue: props.queue})
+    this.stats.initialMessageCount = messageCount
     this._queue = queue
     if (props.exchanges) for (const params of props.exchanges) {
       await ch.exchangeDeclare(params)
