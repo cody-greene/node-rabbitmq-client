@@ -659,6 +659,11 @@ export class Connection extends EventEmitter {
   queueUnbind(params: MethodParams[Cmd.QueueUnbind]): Promise<void> {
     return this._lazy().then(ch => ch.queueUnbind(params))
   }
+
+  /** True if the connection is established and unblocked. See also {@link Connection#on:BLOCKED | Connection#on('connection.blocked')}) */
+  get ready(): boolean {
+    return this._state.readyState === READY_STATE.OPEN && !this._socket.writableCorked
+  }
 }
 
 function determineHeartbeat(x: number, y: number): number {

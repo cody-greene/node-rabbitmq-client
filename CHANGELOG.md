@@ -1,3 +1,7 @@
+# v4.4.0
+Features:
+- added a boolean getter, `connection.ready`: True if the connection is established and unblocked. Useful for healthchecks and the like.
+
 # v4.3.0
 Consumers now track some simple statistics: total messages acknowledged/requeued/dropped, and the current number of prefetched messages. Find these values in the `consumer.stats` object.
 
