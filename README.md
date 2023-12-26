@@ -14,23 +14,14 @@ Why not amqplib?
 - "x-arguments" like "x-message-ttl" don't have camelCase aliases
 
 ## Performance
-Performance is comparable to amqplib (see ./benchmark.ts). Time to publish 1
-million messages in batches of 50:
-```
-TOTAL (messages)=1_000_000
-BATCH_SIZE=50
+Performance is comparable to amqplib (see ./benchmark.ts).
 
-time per batch (milliseconds) (transient queue)
-                 total_time  mean   std     min    max
-rabbitmq-client  39128       2.465  11.713  1.000  1192.000
-amqplib@0.10.3   42378       2.615  5.783   1.000  478.000
-
-
-time per batch (milliseconds) (no queue)
-                 total_time  mean   std    min    max
-rabbitmq-client  23163       1.726  0.497  1.000  13.000
-amqplib@0.10.3   24897       1.842  0.444  1.000  17.000
-```
+|                        Task Name                  | ops/sec | Average Time (ns) |  Margin  | Samples |
+|---------------------------------------------------|---------|-------------------|----------|---------|
+| rabbitmq-client publish-confirm (null route)      | 2,611   |  382919           | ±3.69%   |  1306   |
+| amqplib publish-confirm (null route)              | 2,315   |  431880           | ±4.89%   |  1158   |
+| rabbitmq-client publish-confirm (transient queue) |   961   | 1039884           | ±1.07%   |   481   |
+| amqplib publish-confirm (transient queue)         | 1,059   |  943706           | ±1.34%   |   530   |
 
 ## Quick start
 In addition to the lower-level RabbitMQ methods, this library exposes two main

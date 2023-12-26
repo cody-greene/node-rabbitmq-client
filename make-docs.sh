@@ -20,4 +20,4 @@ node -r ts-node/register/transpile-only node_modules/.bin/typedoc
 
 lver=$(git describe --long --tags --dirty)
 read -p "Commit to gh-pages as $lver? Press key to continue.. " -n1 -s
-cd docs && git commit --all --message="$lver"
+cd docs && git add --all && git commit --message="$lver"
