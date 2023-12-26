@@ -54,15 +54,17 @@ async function useFakeServer(cb: ConnectionCallback|Array<ConnectionCallback>) {
 interface DeferredMessage extends AsyncMessage {
   resolve(status?: ConsumerStatus): void
   reject(reason: any): void
+  reply(body: any): Promise<void>
 }
 
 function createIterableConsumer(rabbit: Connection, opt: ConsumerProps) {
   const stream = new PassThrough({objectMode: true})
-  const sub = rabbit.createConsumer(opt, (msg) => {
+  const sub = rabbit.createConsumer(opt, (msg, reply) => {
     const dfd = createDeferred()
     stream.write(Object.assign(msg, {
       resolve: dfd.resolve,
-      reject: dfd.reject
+      reject: dfd.reject,
+      reply: reply
     }))
     return dfd.promise
   })

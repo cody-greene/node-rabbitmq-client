@@ -1,6 +1,7 @@
 import test from 'tape'
 import Connection, {ConsumerHandler} from '../src'
 import {expectEvent} from '../src/util'
+import {createIterableConsumer} from './util'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 
@@ -132,6 +133,42 @@ test('rpc retry (maxAttempts)', async (t) => {
   } else {
     t.fail('expected an error')
   }
+
+  await client.close()
+  await server.close()
+  await rabbit.close()
+})
+
+test('rpc discard late responses', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const queue = 'f5f8cf8b737f6cdb'
+  const server = createIterableConsumer(rabbit, {
+    queue,
+    queueOptions: {exclusive: true}
+  })
+
+  const client = rabbit.createRPCClient({confirm: true, timeout: 50})
+
+  await Promise.allSettled([
+    client.send(queue, 'ping'),
+    // this kills the channel
+    client.send({exchange: '__bc84b490a8dab5a0__'}, null),
+  ])
+
+  const sending = client.send(queue, 'bing')
+
+  const m1 = await server.read()
+  t.equal(m1.body, 'ping')
+  await m1.reply('pong')
+  m1.resolve()
+
+  const m2 = await server.read()
+  t.equal(m2.body, 'bing')
+  await m2.reply('bong')
+  m2.resolve()
+
+  const r1 = await sending
+  t.equal(r1.body, 'bong')
 
   await client.close()
   await server.close()
