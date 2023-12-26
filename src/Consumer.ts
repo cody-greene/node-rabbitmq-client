@@ -43,7 +43,6 @@ export interface ConsumerProps extends BasicConsumeParams {
  * @param reply Reply to an RPC-type message. Like {@link Channel#basicPublish | Channel#basicPublish()}
  *              but the message body comes first. Some fields are also set automaticaly:
  * - routingKey = msg.replyTo
- * - exchange = ""
  * - correlationId = msg.correlationId
  */
 export interface ConsumerHandler {
@@ -197,10 +196,9 @@ export class Consumer extends EventEmitter {
       if (!req.replyTo)
         throw new Error('attempted to reply to a non-RPC message')
       return this._ch!.basicPublish({
+        correlationId: req.correlationId,
         ...envelope,
-        exchange: '',
         routingKey: req.replyTo,
-        correlationId: req.correlationId
       }, body)
     }
   }
