@@ -1,4 +1,5 @@
-import test from 'tape'
+import test from 'node:test'
+import assert from 'node:assert/strict'
 import Connection, {AsyncMessage, ConsumerStatus} from '../src'
 import {PREFETCH_EVENT} from '../src/Consumer'
 import {expectEvent, createDeferred, Deferred} from '../src/util'
@@ -8,9 +9,7 @@ type TMParams = [Deferred<void>, AsyncMessage]
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 
-test.onFailure(() => process.exit())
-
-test('Consumer#close() waits for setup to complete', async (t) => {
+test('Consumer#close() waits for setup to complete', async () => {
   const rabbit = new Connection({url: RABBITMQ_URL, retryLow: 25})
   const queue = '__test_b1d57ae9eb91df85__'
 
@@ -28,77 +27,74 @@ test('Consumer#close() waits for setup to complete', async (t) => {
     expectEvent(consumer, 'ready'),
     consumer.close(),
   ])
-  t.pass('got "ready" event while closing')
+  assert.ok(true, 'got "ready" event while closing')
 
   await rabbit.close()
 })
 
-test('Connection#createConsumer()', async (t) => {
-  t.plan(14)
+test('Connection#createConsumer()', async () => {
   const rabbit = new Connection({url: RABBITMQ_URL, retryLow: 25})
 
   const queue = '__test_df1865ed59a6b6272b14206b85863099__'
   const exchange = '__test_6d074e50d427e75a__'
 
-  const dfd = createDeferred<void>()
-  const consumer = rabbit.createConsumer({
+  //const dfd = createDeferred<void>()
+  const consumer = createIterableConsumer(rabbit, {
     requeue: true,
     queue: queue,
     queueOptions: {exclusive: true},
     exchanges: [{autoDelete: true, exchange, type: 'topic'}],
     queueBindings: [{queue, exchange, routingKey: 'audit.*'}]
-  }, async (msg) => {
-    t.is(msg.body, 'red fish', 'got the message') // expected 2x
-    // should auto nack
-    if (!msg.redelivered) throw new Error('forced basic.nack')
-    // should auto ack
-    t.is(msg.redelivered, true, 'basic.ack for redelivered msg')
-    dfd.resolve()
   })
 
   await expectEvent(consumer, 'ready')
-  t.pass('consumer is ready')
+  assert.ok(true, 'consumer is ready')
 
   const ch = await rabbit.acquire()
+
+  // ack nack
   await ch.basicPublish({exchange, routingKey: 'audit.test'}, 'red fish')
-  t.pass('published msg')
-
+  const msg = await consumer.read()
+  assert.equal(msg.body, 'red fish', 'got the message')
+  assert.equal(msg.redelivered, false, '1st delivery of this msg')
+  msg.reject(new Error('forced basic.nack'))
   const err0 = await expectEvent(consumer, 'error')
-  t.is(err0.message, 'forced basic.nack',
+  assert.equal(err0.message, 'forced basic.nack',
     'emitted error from failed handler')
-
-  await dfd.promise // wait for expected message deliveries
-  t.pass('consumer handlers finished')
+  const msg2 = await consumer.read()
+  assert.equal(msg2.redelivered, true,
+    'basic.ack for redelivered msg')
+  msg2.resolve()
 
   // can recover after queue deleted (basic.cancel)
-  consumer.once('error', err => { t.is(err.code, 'CANCEL_FORCED', 'consumer cancelled') })
+  consumer.once('error', err => { assert.equal(err.code, 'CANCEL_FORCED', 'consumer cancelled') })
   const {messageCount} = await ch.queueDelete({queue})
-  t.is(messageCount, 0, 'queue is empty')
+  assert.equal(messageCount, 0, 'queue is empty')
   await expectEvent(consumer, 'ready')
-  t.pass('consumer is ready again')
+  assert.ok(true, 'consumer is ready again')
   await ch.close()
 
   // can recover after connection loss
   rabbit._socket.destroy()
   await expectEvent(rabbit, 'error')
-  t.pass('connection reset')
+  assert.ok(true, 'connection reset')
   await expectEvent(consumer, 'ready')
-  t.pass('consumer is ready yet again')
+  assert.ok(true, 'consumer is ready yet again')
 
   // can recover after channel error (channel.close)
-  try {
-    await consumer._ch?.queueDeclare({passive: true, queue: '__should_not_exist_7c8367661d62d8cc__'})
-  } catch (err) {
-    t.equal(err.code, 'NOT_FOUND', 'caused a channel error')
-  }
+  const [res] = await Promise.allSettled([
+    consumer._ch?.queueDeclare({passive: true, queue: '__should_not_exist_7c8367661d62d8cc__'})
+  ])
+  assert.equal(res.status, 'rejected')
+  assert.equal(res.reason.code, 'NOT_FOUND', 'caused a channel error')
   await expectEvent(consumer, 'ready')
-  t.pass('consumer is ready for the last time')
+  assert.ok(true, 'consumer is ready for the last time')
 
   await consumer.close()
   await rabbit.close()
 })
 
-test('Consumer does not create duplicates when setup temporarily fails', async (t) => {
+test('Consumer does not create duplicates when setup temporarily fails', async () => {
   const rabbit = new Connection({
     url: RABBITMQ_URL,
     retryHigh: 25
@@ -111,14 +107,14 @@ test('Consumer does not create duplicates when setup temporarily fails', async (
   }, () => { /* do nothing */ })
 
   const err = await expectEvent(consumer, 'error')
-  t.is(err.code, 'NOT_FOUND', 'setup should fail at first')
+  assert.equal(err.code, 'NOT_FOUND', 'setup should fail at first')
 
   const ch = await rabbit.acquire()
   await ch.queueDeclare({queue, exclusive: true}) // auto-deleted
   await expectEvent(consumer, 'ready')
-  t.pass('consumer setup successful')
+  assert.ok(true, 'consumer setup successful')
   consumer.once('ready', () => {
-    t.fail('expected only ONE ready event')
+    assert.fail('expected only ONE ready event')
   })
 
   await ch.close()
@@ -126,7 +122,7 @@ test('Consumer does not create duplicates when setup temporarily fails', async (
   await rabbit.close()
 })
 
-test('Consumer waits for in-progress jobs to complete before reconnecting', async (t) => {
+test('Consumer waits for in-progress jobs to complete before reconnecting', async () => {
   const rabbit = new Connection({
     url: RABBITMQ_URL,
     retryLow: 1, retryHigh: 1
@@ -147,28 +143,28 @@ test('Consumer waits for in-progress jobs to complete before reconnecting', asyn
   const ch = await rabbit.acquire()
   await ch.basicPublish(queue, 'red')
   const [job1, msg1] = await expectEvent(consumer, 'test.message')
-  t.is(msg1.body, 'red', 'consumed a message')
+  assert.equal(msg1.body, 'red', 'consumed a message')
 
   // intentionally cause a channel error so setup has to rerun
   await consumer._ch!.basicAck({deliveryTag: 404})
   await expectEvent(rabbit, 'error')
-  t.pass('channel killed')
+  assert.ok(true, 'channel killed')
 
   await sleep(25)
   job1.resolve()
   const err = await expectEvent(consumer, 'error')
-  t.is(err.code, 'CH_CLOSE', 'old channel is closed')
+  assert.equal(err.code, 'CH_CLOSE', 'old channel is closed')
   const [job2, msg2] = await expectEvent(consumer, 'test.message')
   job2.resolve()
-  t.is(msg2.body, 'red')
-  t.is(msg2.redelivered, true, 'consumed redelivered message after delay')
+  assert.equal(msg2.body, 'red')
+  assert.equal(msg2.redelivered, true, 'consumed redelivered message after delay')
 
   await consumer.close()
   await ch.close()
   await rabbit.close()
 })
 
-test('Consumer should limit handler concurrency', async (t) => {
+test('Consumer should limit handler concurrency', async () => {
   const rabbit = new Connection({
     url: RABBITMQ_URL,
     retryHigh: 25,
@@ -197,35 +193,35 @@ test('Consumer should limit handler concurrency', async (t) => {
   const [job1, msg1] = await expectEvent<TMParams>(consumer, 'test.message')
   await expectEvent(consumer, PREFETCH_EVENT)
   await expectEvent(consumer, PREFETCH_EVENT)
-  t.is(msg1.body, 'red', 'consumed a message')
-  t.is(msg1.redelivered, false, 'redelivered=false')
-  t.is(consumer._prefetched.length, 2, '2nd message got buffered')
+  assert.equal(msg1.body, 'red', 'consumed a message')
+  assert.equal(msg1.redelivered, false, 'redelivered=false')
+  assert.equal(consumer._prefetched.length, 2, '2nd message got buffered')
   job1.resolve()
 
   const [job2a, msg2a] = await expectEvent<TMParams>(consumer, 'test.message')
-  t.is(msg2a.body, 'blue', 'consumed 2nd message')
-  t.is(msg2a.redelivered, false, 'redelivered=false')
-  t.is(consumer._prefetched.length, 1, '3rd message still buffered')
+  assert.equal(msg2a.body, 'blue', 'consumed 2nd message')
+  assert.equal(msg2a.redelivered, false, 'redelivered=false')
+  assert.equal(consumer._prefetched.length, 1, '3rd message still buffered')
 
   // intentionally cause a channel error so setup has to rerun
   await consumer._ch!.basicAck({deliveryTag: 404})
   await expectEvent(rabbit, 'error')
-  t.is(consumer._prefetched.length, 0, 'buffered message was dropped')
+  assert.equal(consumer._prefetched.length, 0, 'buffered message was dropped')
 
   job2a.resolve()
   const err = await expectEvent(consumer, 'error')
-  t.is(err.code, 'CH_CLOSE', 'old channel is closed')
+  assert.equal(err.code, 'CH_CLOSE', 'old channel is closed')
 
   // messages should be redelivered after channel error
 
   const [job2b, msg2b] = await expectEvent<TMParams>(consumer, 'test.message')
-  t.is(msg2b.body, 'blue', 'consumed 2nd message again')
-  t.is(msg2b.redelivered, true, 'redelivered=true')
+  assert.equal(msg2b.body, 'blue', 'consumed 2nd message again')
+  assert.equal(msg2b.redelivered, true, 'redelivered=true')
   job2b.resolve()
 
   const [job3, msg3] = await expectEvent<TMParams>(consumer, 'test.message')
-  t.is(msg3.body, 'green', 'consumed 3rd message')
-  t.is(msg3.redelivered, true, 'redelivered=true')
+  assert.equal(msg3.body, 'green', 'consumed 3rd message')
+  assert.equal(msg3.redelivered, true, 'redelivered=true')
   job3.resolve()
 
   await consumer.close()
@@ -233,7 +229,7 @@ test('Consumer should limit handler concurrency', async (t) => {
   await rabbit.close()
 })
 
-test('Consumer concurrency with noAck=true', async (t) => {
+test('Consumer concurrency with noAck=true', async () => {
   const rabbit = new Connection({
     url: RABBITMQ_URL,
     retryHigh: 25,
@@ -260,14 +256,14 @@ test('Consumer concurrency with noAck=true', async (t) => {
   ])
 
   const [job1, msg1] = await expectEvent<TMParams>(consumer, 'test.message')
-  t.is(msg1.body, 'red', 'consumed 1st message')
+  assert.equal(msg1.body, 'red', 'consumed 1st message')
   await expectEvent(consumer, PREFETCH_EVENT)
-  t.is(consumer._prefetched.length, 1, '2nd message got buffered')
+  assert.equal(consumer._prefetched.length, 1, '2nd message got buffered')
 
   // intentionally cause a channel error
   await consumer._ch!.basicAck({deliveryTag: 404})
   await expectEvent(rabbit, 'error')
-  t.is(consumer._prefetched.length, 1, 'buffered message remains')
+  assert.equal(consumer._prefetched.length, 1, 'buffered message remains')
 
   // with noAck=true, close() should wait for remaining messages to process
   const consumerClosed = consumer.close()
@@ -276,8 +272,8 @@ test('Consumer concurrency with noAck=true', async (t) => {
   job1.resolve()
 
   const [job2, msg2] = await expectEvent<TMParams>(consumer, 'test.message')
-  t.is(msg2.body, 'blue', 'consumed 2nd message')
-  t.is(msg2.redelivered, false, 'redelivered=false')
+  assert.equal(msg2.body, 'blue', 'consumed 2nd message')
+  assert.equal(msg2.redelivered, false, 'redelivered=false')
 
   job2.resolve()
 
@@ -286,7 +282,7 @@ test('Consumer concurrency with noAck=true', async (t) => {
   await rabbit.close()
 })
 
-test('Consumer return codes', async (t) => {
+test('Consumer return codes', async () => {
   const rabbit = new Connection(RABBITMQ_URL)
   const queue = '__test_03f0726440598228'
   const deadqueue = '__test_fadb49f36193d615'
@@ -313,26 +309,26 @@ test('Consumer return codes', async (t) => {
   // can drop by default
   await ch.basicPublish(queue, 'red')
   const msg1 = await sub.read()
-  t.equal(msg1.redelivered, false)
+  assert.equal(msg1.redelivered, false)
   msg1.reject(new Error('expected'))
   const err = await expectEvent(sub, 'error')
-  t.equal(err.message, 'expected')
+  assert.equal(err.message, 'expected')
   const msg2 = await dead.read()
-  t.equal(msg2.body, 'red', 'got dead-letter')
+  assert.equal(msg2.body, 'red', 'got dead-letter')
   msg2.resolve()
 
   // can selectively requeue
   await ch.basicPublish(queue, 'blue')
   const msg3 = await sub.read()
-  t.equal(msg3.redelivered, false)
+  assert.equal(msg3.redelivered, false)
   msg3.resolve(ConsumerStatus.REQUEUE)
   const msg4 = await sub.read()
-  t.equal(msg4.redelivered, true, 'msg redelivered')
+  assert.equal(msg4.redelivered, true, 'msg redelivered')
 
   // can explicitly drop
   msg4.resolve(ConsumerStatus.DROP)
   const msg5 = await dead.read()
-  t.equal(msg5.body, 'blue', 'message dropped')
+  assert.equal(msg5.body, 'blue', 'message dropped')
   msg5.resolve()
 
   await ch.close()
@@ -341,7 +337,7 @@ test('Consumer return codes', async (t) => {
   await rabbit.close()
 })
 
-test('Consumer stats', async (t) => {
+test('Consumer stats', async () => {
   const rabbit = new Connection(RABBITMQ_URL)
   const pub = rabbit.createPublisher({confirm: true})
   const sub = createIterableConsumer(rabbit, {
@@ -370,7 +366,7 @@ test('Consumer stats', async (t) => {
     rabbit.close(),
   ])
 
-  t.equal(sub.stats.acknowledged, 1)
-  t.equal(sub.stats.requeued, 1)
-  t.equal(sub.stats.dropped, 1)
+  assert.equal(sub.stats.acknowledged, 1)
+  assert.equal(sub.stats.requeued, 1)
+  assert.equal(sub.stats.dropped, 1)
 })

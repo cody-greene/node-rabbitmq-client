@@ -19,16 +19,14 @@
   ],
   "scripts": {
     "prepublishOnly": "rm -rf lib && tsc -p tsconfig.build.json",
-    "test": "node -r ts-node/register node_modules/.bin/tape test/*.ts"
+    "test": "node -r ts-node/register --test test/*.ts"
   },
   "devDependencies": {
     "@cody-greene/eslint-config": "^3.3.1",
     "@types/node": "^16.18",
-    "@types/tape": "^4.13.4",
     "@typescript-eslint/eslint-plugin": "^5.59.1",
     "@typescript-eslint/parser": "^5.59.1",
     "eslint": "^8.39.0",
-    "tape": "^5.6.3",
     "tinybench": "^2.5.1",
     "ts-node": "^10.4.0",
     "typedoc": "^0.24.6",
