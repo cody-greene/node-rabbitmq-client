@@ -1,15 +1,27 @@
+# v4.5.0
+Features:
+- You can now override the exchange and correlationId when replying to a
+  consumed message with `reply()` (for messages with a replyTo header)
+
 # v4.4.0
 Features:
-- added a boolean getter, `connection.ready`: True if the connection is established and unblocked. Useful for healthchecks and the like.
+- added a boolean getter, `connection.ready`: True if the connection is
+  established and unblocked. Useful for healthchecks and the like.
 
 # v4.3.0
-Consumers now track some simple statistics: total messages acknowledged/requeued/dropped, and the current number of prefetched messages. Find these values in the `consumer.stats` object.
+Features:
+- Consumers now track some simple statistics: total messages
+  acknowledged/requeued/dropped, and the current number of prefetched messages.
+  Find these values in the `consumer.stats` object.
 
 # v4.2.1
 fix: closing a channel (in a certain order) no longer causes a lockup
 
 # v4.2.0
-- [#29](https://github.com/cody-greene/node-rabbitmq-client/pull/29) Added some management methods to the top-level Connection interface. You can create/delete queues, exchanges, and bindings. A special channel is implicitly created and maintained internally, so you don't have to worry about it. New methods:
+[#29](https://github.com/cody-greene/node-rabbitmq-client/pull/29) Added some
+management methods to the top-level Connection interface. You can create/delete
+queues, exchanges, and bindings. A special channel is implicitly created and
+maintained internally, so you don't have to worry about it. New methods:
 - basicGet
 - exchangeBind
 - exchangeDeclare
