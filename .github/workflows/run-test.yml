@@ -20,7 +20,7 @@ jobs:
       matrix:
         # See supported Node.js release schedule at:
         # https://nodejs.org/en/about/previous-releases
-        node-version: [18, 20, 22]
+        node-version: [18, 20]
 
     services:
       rabbitmq:
@@ -29,9 +29,9 @@ jobs:
         - 5672:5672
 
     steps:
-    - uses: actions/checkout@v4.1
+    - uses: actions/checkout@v4
     - name: Use Node.js ${{matrix.node-version}}
-      uses: actions/setup-node@v4.0
+      uses: actions/setup-node@v4
       with:
         node-version: ${{matrix.node-version}}
         cache: 'npm'
