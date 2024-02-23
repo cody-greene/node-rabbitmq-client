@@ -415,7 +415,7 @@ export class Channel extends EventEmitter {
       type: FrameType.METHOD,
       channelId: this.id,
       methodId: req,
-      params: params} as MethodFrame)
+      params: params} as MethodFrame, this._state.maxFrameSize)
     const rpc = [dfd, req, res, it] as const
     if (this._state.rpc)
       this._state.rpcBuffer.push(rpc)
@@ -446,7 +446,7 @@ export class Channel extends EventEmitter {
       methodId: methodId,
       params: params
     }
-    this._state.stream.write(genFrame(frame as MethodFrame), (err) => {
+    this._state.stream.write(genFrame(frame as MethodFrame, this._state.maxFrameSize), (err) => {
       if (err) {
         err.message += '; ' + Cmd[methodId]
         this._conn.emit('error', err)

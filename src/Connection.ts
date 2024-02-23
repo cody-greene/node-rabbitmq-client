@@ -496,7 +496,7 @@ export class Connection extends EventEmitter {
 
   /** @internal */
   _writeMethod(params: MethodFrame): void {
-    const frame = encodeFrame(params)
+    const frame = encodeFrame(params, this._state.frameMax)
     this._socket.write(frame)
   }
 

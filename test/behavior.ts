@@ -787,5 +787,34 @@ test('lazy channel', async () => {
   await rabbit.close()
 })
 
-// TODO opt.frameMax
+test('client-side frame size checks', async () => {
+  const rabbit = new Connection({
+    url: RABBITMQ_URL,
+    frameMax: 4096,
+  })
+
+  const queue = '__test_797e71d3d9153ace'
+
+  // simple method with oversized frame should fail
+  const [res] = await Promise.allSettled([rabbit.queueBind({
+    queue: queue,
+    routingKey: 'test',
+    exchange: queue,
+    arguments: {bigstring: '0'.repeat(4018)}
+  })])
+  assert.equal(res.status, 'rejected')
+  assert.match(res.reason.message, /^frame size of 4097/)
+
+  // publish with oversized header should fail
+  const pub = rabbit.createPublisher({confirm: true})
+  const [res2] = await Promise.allSettled([
+    pub.send({routingKey: queue, headers: {bigstring: '0'.repeat(4038)}}, null)
+  ])
+  assert.equal(res2.status, 'rejected')
+  assert.match(res2.reason.message, /^frame size of 4097/)
+
+  await pub.close()
+  await rabbit.close()
+})
+
 // TODO codec
