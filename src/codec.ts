@@ -1,7 +1,7 @@
 /*
  * This module encodes to, and decodes from, the AMQP binary protocol
  */
-import {AMQPConnectionError} from './exception'
+import {AMQPChannelError, AMQPConnectionError} from './exception'
 
 /** @internal AMQP 0091 */
 export const PROTOCOL_HEADER = Buffer.from([65, 77, 81, 80, 0, 0, 9, 1])
@@ -743,17 +743,21 @@ export async function decodeFrame(read: (bytes: number) => Promise<Buffer>): Pro
 }
 
 /** @internal */
-export function encodeFrame(data: DataFrame): Buffer {
+export function encodeFrame(data: DataFrame, maxSize = Infinity): Buffer {
   if (data.type === FrameType.METHOD) {
     const def = CMD_CODEC_BY_ID.get(data.methodId)
     if (def == null) {
       throw new AMQPConnectionError('CODEC', 'unknown AMQP method id: ' + data.methodId)
     }
     const paramSize = data.params == null ? 0 : def.sizeof(data.params)
+    const frameSize = 4 + paramSize
+    if (frameSize > maxSize) {
+      throw new AMQPChannelError('CODEC', `frame size of ${frameSize} bytes exceeds maximum of ${maxSize}`)
+    }
     const buf = Buffer.allocUnsafe(12 + paramSize)
     let offset = buf.writeUInt8(FrameType.METHOD)
     offset = buf.writeUInt16BE(data.channelId, offset)
-    offset = buf.writeUInt32BE(4 + paramSize, offset)
+    offset = buf.writeUInt32BE(frameSize, offset)
     offset = buf.writeUInt32BE(data.methodId, offset)
     if (data.params != null)
       offset = def.encode(buf, data.params, offset)
@@ -770,10 +774,14 @@ export function encodeFrame(data: DataFrame): Buffer {
         bits |= mask
       }
     }
+    const frameSize = 14 + paramSize
+    if (frameSize > maxSize) {
+      throw new AMQPChannelError('CODEC', `frame size of ${frameSize} bytes exceeds maximum of ${maxSize}`)
+    }
     const buf = Buffer.allocUnsafe(22 + paramSize)
     let offset = buf.writeUInt8(FrameType.HEADER)
     offset = buf.writeUInt16BE(data.channelId, offset)
-    offset = buf.writeUInt32BE(14 + paramSize, offset)
+    offset = buf.writeUInt32BE(frameSize, offset)
     offset = buf.writeUInt32BE(0x003c0000, offset)
     offset = buf.writeBigUInt64BE(BigInt(data.bodySize), offset)
     offset = buf.writeUInt16BE(bits, offset)
@@ -799,33 +807,37 @@ export function encodeFrame(data: DataFrame): Buffer {
 }
 
 /** @internal */
-export function* genFrame(frame: MethodFrame): Generator<Buffer, void> {
-  yield encodeFrame(frame)
+export function* genFrame(frame: MethodFrame, frameMax: number): Generator<Buffer, void> {
+  yield encodeFrame(frame, frameMax)
 }
 
 /** @internal Allocate DataFrame buffers on demand, right before writing to the socket */
 export function* genContentFrames(channelId: number, params: Envelope, body: Buffer, frameMax: number): Generator<Buffer, void> {
-  yield encodeFrame({
+  // Immediately encode header frame to catch any codec errors before we send
+  // the method frame. If we send the method frame, but can't send the header
+  // frame, this will cause a connection-level error and reset. This way the
+  // error is contained to the channel-level.
+  const methodFrame = encodeFrame({
     type: FrameType.METHOD,
     channelId,
     methodId: Cmd.BasicPublish,
     params
   })
-  const maxSize = frameMax - 8
-  const totalContentFrames = Math.ceil(body.length / maxSize)
   const headerFrame = encodeFrame({
     type: FrameType.HEADER,
     channelId,
     bodySize: body.length,
     fields: params
-  })
+  }, frameMax)
+  yield methodFrame
   yield headerFrame
+  const totalContentFrames = Math.ceil(body.length / frameMax)
   for (let index = 0; index < totalContentFrames; ++index) {
-    const offset = maxSize * index
+    const offset = frameMax * index
     yield encodeFrame({
       type: FrameType.BODY,
       channelId,
-      payload: body.slice(offset, offset+maxSize)
+      payload: body.slice(offset, offset+frameMax)
     })
   }
 }
