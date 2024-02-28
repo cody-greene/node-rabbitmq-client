@@ -1,3 +1,8 @@
+## v5.5.1
+
+### Bug Fixes
+- Check frame size before socket write (#41)
+
 # v4.5.0
 Features:
 - You can now override the exchange and correlationId when replying to a
