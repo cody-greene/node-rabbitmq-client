@@ -520,7 +520,8 @@ export class Connection extends EventEmitter {
               this._socket.uncork()
             }
             const strcode = ReplyCode[frame.params.replyCode] || String(frame.params.replyCode)
-            const msg = Cmd[frame.params.methodId] + ': ' + frame.params.replyText
+            const souceMethod = frame.params.methodId ? Cmd[frame.params.methodId] + ': ' : ''
+            const msg = souceMethod + frame.params.replyText
             this._socket.emit('error', new AMQPConnectionError(strcode, msg))
             break
           case Cmd.ConnectionCloseOK:

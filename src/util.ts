@@ -120,7 +120,10 @@ export class EncoderStream<T=unknown> extends Writable {
   writeAsync: (it: Iterator<T, void>) => Promise<void> = promisify(this.write)
   _destroy(err: Error | null, cb: (err?: Error | null) => void): void {
     this._out.removeListener('drain', this._loop)
-    this._cur = undefined
+    if (this._cur) {
+      this._cur[1](err)
+      this._cur = undefined
+    }
     cb(err)
   }
   _write(it: Iterator<T, void>, enc: unknown, cb: (error?: Error | null) => void): void {
