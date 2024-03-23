@@ -1,4 +1,9 @@
-## v5.5.1
+## v4.5.2
+
+### Bug Fixes
+- aws-lambda, send() won't hang after reconnect (#46)
+
+## v4.5.1
 
 ### Bug Fixes
 - Check frame size before socket write (#41)

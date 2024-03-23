@@ -139,7 +139,7 @@ test('EncoderStream should stop writing when destroyed', async () => {
   assert.equal(socket.read(), null, 'green should not be written')
 })
 
-test('EncoderStream invokes write callback when destroyed', {only: true}, async () => {
+test('EncoderStream invokes write callback when destroyed', async () => {
   const it = ['red', 'blue', 'green'].values()
   const socket = new StubSocket({objectMode: true, highWaterMark: 1})
   const stream = new EncoderStream<string>(socket)
