@@ -132,7 +132,6 @@ test('[opt.connectionTimeout] is a time limit on each connection attempt', async
     return assert.fail('expected server addr obj')
   server.on('connection', () => {
     // never respond
-    server.close()
   })
 
   const rabbit = new Connection({
@@ -144,6 +143,7 @@ test('[opt.connectionTimeout] is a time limit on each connection attempt', async
   assert.equal(err.code, 'CONNECTION_TIMEOUT',
     'should get timeout error')
 
+  server.close()
   await rabbit.close()
 })
 
@@ -347,7 +347,6 @@ test('[opt.heartbeat] creates a timeout to detect a dead socket', async () => {
   let s1complete = false
 
   const [port, server] = await useFakeServer(async (socket, next) => {
-    server.close()
     let frame
 
     // S:connection.start
@@ -378,6 +377,7 @@ test('[opt.heartbeat] creates a timeout to detect a dead socket', async () => {
   assert.equal(err.code, 'SOCKET_TIMEOUT',
     'got socket timeout error')
 
+  server.close()
   await rabbit.close()
   assert.equal(s1complete, true)
 })
@@ -509,7 +509,6 @@ test('Connection#acquire() can time out', async () => {
     return assert.fail('expected server addr obj')
   server.on('connection', () => {
     // never respond
-    server.close()
   })
 
   const rabbit = new Connection({port: addr.port, acquireTimeout: 25})
@@ -523,6 +522,7 @@ test('Connection#acquire() can time out', async () => {
   }
 
   await rabbit.close()
+  server.close()
 })
 
 test('Connection#createPublisher()', async () => {

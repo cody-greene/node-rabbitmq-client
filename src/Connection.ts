@@ -37,10 +37,9 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promi
   })
 }
 
-const CLIENT_PROPERTIES = (pkg => ({
-  information: pkg.homepage,
-  product: pkg.name,
-  version: pkg.version,
+const CLIENT_PROPERTIES = {
+  product: 'rabbitmq-client',
+  version: '4.5.3',
   platform: `node.js-${process.version}`,
   capabilities: {
     'basic.nack': true,
@@ -52,7 +51,7 @@ const CLIENT_PROPERTIES = (pkg => ({
     // https://www.rabbitmq.com/auth-notification.html
     authentication_failure_close: true,
   }
-}))(require('../package.json'))
+}
 
 export declare interface Connection {
   /** The connection is successfully (re)established */
@@ -515,7 +514,8 @@ export class Connection extends EventEmitter {
                 type: FrameType.METHOD,
                 channelId: 0,
                 methodId: Cmd.ConnectionCloseOK,
-                params: undefined})
+                params: undefined
+              })
               this._socket.end()
               this._socket.uncork()
             }

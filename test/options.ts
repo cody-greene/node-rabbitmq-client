@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import normalizeOptions from '../src/normalize'
 
-test('should enable TLS and change the default port for "amqps" urls', async (t) => {
+test('should enable TLS and change the default port for "amqps" urls', async () => {
   const a1 = normalizeOptions('amqps://guest:guest@127.0.0.1')
   assert.ok(a1.tls)
   assert.equal(a1.hosts[0].port, '5671')

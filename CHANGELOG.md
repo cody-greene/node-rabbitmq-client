@@ -1,3 +1,8 @@
+## v4.5.3
+
+### Bug Fixes
+- experimental bun support
+
 ## v4.5.2
 
 ### Bug Fixes

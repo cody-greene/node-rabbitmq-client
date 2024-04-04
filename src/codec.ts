@@ -755,7 +755,7 @@ export function encodeFrame(data: DataFrame, maxSize = Infinity): Buffer {
       throw new AMQPChannelError('CODEC', `frame size of ${frameSize} bytes exceeds maximum of ${maxSize}`)
     }
     const buf = Buffer.allocUnsafe(12 + paramSize)
-    let offset = buf.writeUInt8(FrameType.METHOD)
+    let offset = buf.writeUInt8(FrameType.METHOD, 0)
     offset = buf.writeUInt16BE(data.channelId, offset)
     offset = buf.writeUInt32BE(frameSize, offset)
     offset = buf.writeUInt32BE(data.methodId, offset)
@@ -779,7 +779,7 @@ export function encodeFrame(data: DataFrame, maxSize = Infinity): Buffer {
       throw new AMQPChannelError('CODEC', `frame size of ${frameSize} bytes exceeds maximum of ${maxSize}`)
     }
     const buf = Buffer.allocUnsafe(22 + paramSize)
-    let offset = buf.writeUInt8(FrameType.HEADER)
+    let offset = buf.writeUInt8(FrameType.HEADER, 0)
     offset = buf.writeUInt16BE(data.channelId, offset)
     offset = buf.writeUInt32BE(frameSize, offset)
     offset = buf.writeUInt32BE(0x003c0000, offset)
@@ -795,7 +795,7 @@ export function encodeFrame(data: DataFrame, maxSize = Infinity): Buffer {
     return buf
   } else if (data.type === FrameType.BODY) {
     const buf = Buffer.allocUnsafe(8 + data.payload.byteLength)
-    let offset = buf.writeUInt8(FrameType.BODY)
+    let offset = buf.writeUInt8(FrameType.BODY, 0)
     offset = buf.writeUInt16BE(data.channelId, offset)
     offset = buf.writeUInt32BE(data.payload.byteLength, offset)
     offset += data.payload.copy(buf, offset, 0)
