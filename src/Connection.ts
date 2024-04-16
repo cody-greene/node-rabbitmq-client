@@ -446,6 +446,7 @@ export class Connection extends EventEmitter {
       ? Math.min(this._opt.maxChannels, params.channelMax)
       : this._opt.maxChannels
     this._state.channelMax = channelMax
+    this._socket.setMaxListeners(channelMax) // prevent MaxListenersExceededWarning with >10 channels
     const frameMax = params.frameMax > 0
       ? Math.min(this._opt.frameMax, params.frameMax)
       : this._opt.frameMax

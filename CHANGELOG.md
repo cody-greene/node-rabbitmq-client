@@ -1,3 +1,8 @@
+## v4.5.4
+
+### Bug Fixes
+- silence MaxListenersExceededWarning with >10 channels
+
 ## v4.5.3
 
 ### Bug Fixes
