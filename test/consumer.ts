@@ -380,43 +380,19 @@ test('Lazy consumer', async () => {
 
   assert.equal(sub._readyState, READY_STATE.CLOSED)
 
-  const waitFor = expectEvent(sub, 'ready')
   sub.start()
-  await waitFor
-
-  assert.equal(sub._readyState, READY_STATE.OPEN)
-  
-  await Promise.all([
-    sub.close(),
-    rabbit.close(),
-  ])
-
-  assert.equal(sub._readyState, READY_STATE.CLOSED)
-})
-
-test('Restart lazy consumer', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const sub = createIterableConsumer(rabbit, {
-    queueOptions: {exclusive: true},
-    lazy: true
-  })
-
-  assert.equal(sub._readyState, READY_STATE.CLOSED)
-
-  const waitFor = expectEvent(sub, 'ready')
-  sub.start()
-  await waitFor
+  await expectEvent(sub, 'ready')
 
   assert.equal(sub._readyState, READY_STATE.OPEN)
 
   await sub.close()
   assert.equal(sub._readyState, READY_STATE.CLOSED)
-  
-  const waitForSecondStart = expectEvent(sub, 'ready')
+
+  // Should allow restarting after close
   sub.start()
-  await waitForSecondStart
+  await expectEvent(sub, 'ready')
   assert.equal(sub._readyState, READY_STATE.OPEN)
-  
+
   await Promise.all([
     sub.close(),
     rabbit.close(),

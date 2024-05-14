@@ -191,7 +191,7 @@ export class Consumer extends EventEmitter {
     this.concurrency = props.concurrency && Number.isInteger(props.concurrency)
       ? Math.max(1, props.concurrency) : Infinity
     Object.defineProperty(this.stats, 'prefetched', {get: () => this._prefetched.length})
-    if (props?.lazy === true) {
+    if (props.lazy) {
       this._readyState = READY_STATE.CLOSED
     } else {
       this._connect()
@@ -380,7 +380,7 @@ export class Consumer extends EventEmitter {
 
     this._readyState = READY_STATE.CONNECTING
     this._connect()
-  }  
+  }
 
   /** Stop consuming messages. Close the channel once all pending message
    * handlers have settled. If called while the Connection is reconnecting,
