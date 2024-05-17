@@ -539,7 +539,6 @@ export class Connection extends EventEmitter {
           default:
             ch = this._state.leased.get(frame.channelId)
             if (ch == null) {
-              // TODO test me
               throw new AMQPConnectionError('UNEXPECTED_FRAME',
                 'client received a method frame for an unexpected channel')
             }

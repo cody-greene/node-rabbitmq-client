@@ -221,6 +221,75 @@ test('will reconnect when connection.close is received from the server', async (
   await rabbit.close()
 })
 
+test('will reconnect when receiving a frame for an unexpected channel', {only: true}, async () => {
+  const [port, server] = await useFakeServer([
+    async (socket, next) => {
+      let frame
+
+      // S:connection.start
+      socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
+      frame = await next() as MethodFrame
+      assert.equal(frame.methodId, Cmd.ConnectionStartOK)
+
+      // S:connection.tune
+      socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
+      frame = await next() as MethodFrame
+      assert.equal(frame.methodId, Cmd.ConnectionTuneOK)
+
+      frame = await next() as MethodFrame
+      assert.equal(frame.methodId, Cmd.ConnectionOpen)
+      // S:connection.open-ok
+      socket.write('AQAAAAAABQAKACkAzg', 'base64')
+
+      // S:queue.declare on channel 5 should cause an error
+      socket.end('AQAFAAAAFAAyAAoAAAh3aGF0ZXZlcgAAAAAAzg', 'base64')
+    },
+    async (socket, next) => {
+      let frame
+
+      // S:connection.start
+      socket.write('AQAAAAAAHAAKAAoACQAAAAAAAAAFUExBSU4AAAAFZW5fVVPO', 'base64')
+      frame = await next() as MethodFrame
+      assert.equal(frame.methodId, Cmd.ConnectionStartOK)
+
+      // S:connection.tune
+      socket.write('AQAAAAAADAAKAB4H/wACAAAAPM4', 'base64')
+      frame = await next() as MethodFrame
+      assert.equal(frame.methodId, Cmd.ConnectionTuneOK)
+
+      frame = await next() as MethodFrame
+      assert.equal(frame.methodId, Cmd.ConnectionOpen)
+      // S:connection.open-ok
+      socket.write('AQAAAAAABQAKACkAzg', 'base64')
+
+      frame = await next() as MethodFrame
+      assert.equal(frame.methodId, Cmd.ConnectionClose)
+      // S:connection.close-ok
+      socket.end('AQAAAAAABAAKADPO', 'base64')
+      server.close()
+    }
+  ])
+
+  const rabbit = new Connection({
+    //url: RABBITMQ_URL,
+    port: port,
+    retryLow: 25, // fast reconnect
+    connectionName: '__connection.close_test__'
+  })
+
+  await expectEvent(rabbit, 'connection')
+  assert.ok(true, 'established connection')
+
+  const err = await expectEvent(rabbit, 'error')
+  assert.equal(err.code, 'UNEXPECTED_FRAME',
+    'bad frame caused an error')
+
+  await expectEvent(rabbit, 'connection')
+  assert.ok(true, 'reconnected')
+
+  await rabbit.close()
+})
+
 test('handles channel errors', async () => {
   const queue = '__test_e8f4f1d045bc0097__' // this random queue should not exist
   const rabbit = new Connection(RABBITMQ_URL)
@@ -646,7 +715,7 @@ test('Publisher (maxAttempts) should retry failed publish', async () => {
     expectEvent(pro, 'retry'),
     pro.publish({exchange}, 'test2')
   ])
- assert.equal(err.code, 'NOT_FOUND', 'got retry event')
+  assert.equal(err.code, 'NOT_FOUND', 'got retry event')
   assert.ok(true, 'publish succeeded eventually')
   await ch.close()
   await pro.close()
@@ -749,7 +818,7 @@ test('handles (un)auth error', async () => {
   wrongurl.password = 'badpassword'
   const rabbit = new Connection(wrongurl.toString())
   const err = await expectEvent(rabbit, 'error')
- assert.equal(err.code, 'ACCESS_REFUSED')
+  assert.equal(err.code, 'ACCESS_REFUSED')
   await rabbit.close()
 })
 
