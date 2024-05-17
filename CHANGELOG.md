@@ -1,3 +1,8 @@
+## v4.6.0
+
+## Features
+- Add lazy consumer options (#51): Start or restart a consumer with `sub.start()`
+
 ## v4.5.4
 
 ### Bug Fixes
