@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import Connection, {AsyncMessage, ConsumerStatus} from '../src'
 import {PREFETCH_EVENT} from '../src/Consumer'
-import {expectEvent, createDeferred, Deferred} from '../src/util'
+import {expectEvent, createDeferred, Deferred, READY_STATE} from '../src/util'
 import {sleep, createIterableConsumer} from './util'
 
 type TMParams = [Deferred<void>, AsyncMessage]
@@ -369,4 +369,58 @@ test('Consumer stats', async () => {
   assert.equal(sub.stats.acknowledged, 1)
   assert.equal(sub.stats.requeued, 1)
   assert.equal(sub.stats.dropped, 1)
+})
+
+test('Lazy consumer', async () => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const sub = createIterableConsumer(rabbit, {
+    queueOptions: {exclusive: true},
+    lazy: true
+  })
+
+  assert.equal(sub._readyState, READY_STATE.CLOSED)
+
+  const waitFor = expectEvent(sub, 'ready')
+  sub.start()
+  await waitFor
+
+  assert.equal(sub._readyState, READY_STATE.OPEN)
+  
+  await Promise.all([
+    sub.close(),
+    rabbit.close(),
+  ])
+
+  assert.equal(sub._readyState, READY_STATE.CLOSED)
+})
+
+test('Restart lazy consumer', async () => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  const sub = createIterableConsumer(rabbit, {
+    queueOptions: {exclusive: true},
+    lazy: true
+  })
+
+  assert.equal(sub._readyState, READY_STATE.CLOSED)
+
+  const waitFor = expectEvent(sub, 'ready')
+  sub.start()
+  await waitFor
+
+  assert.equal(sub._readyState, READY_STATE.OPEN)
+
+  await sub.close()
+  assert.equal(sub._readyState, READY_STATE.CLOSED)
+  
+  const waitForSecondStart = expectEvent(sub, 'ready')
+  sub.start()
+  await waitForSecondStart
+  assert.equal(sub._readyState, READY_STATE.OPEN)
+  
+  await Promise.all([
+    sub.close(),
+    rabbit.close(),
+  ])
+
+  assert.equal(sub._readyState, READY_STATE.CLOSED)
 })

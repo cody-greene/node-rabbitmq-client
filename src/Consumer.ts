@@ -36,6 +36,10 @@ export interface ConsumerProps extends BasicConsumeParams {
   /** Any exchange-exchange bindings to be declared before the consumer and
    * whenever the connection is reset. See {@link Channel.exchangeBind} */
   exchangeBindings?: Array<MethodParams[Cmd.ExchangeBind]>
+  /** If true, the consumer will not automatically start. You must call
+   * consumer.start() yourself.
+   * @default false */
+  lazy?: boolean
 }
 
 /**
@@ -187,7 +191,11 @@ export class Consumer extends EventEmitter {
     this.concurrency = props.concurrency && Number.isInteger(props.concurrency)
       ? Math.max(1, props.concurrency) : Infinity
     Object.defineProperty(this.stats, 'prefetched', {get: () => this._prefetched.length})
-    this._connect()
+    if (props?.lazy === true) {
+      this._readyState = READY_STATE.CLOSED
+    } else {
+      this._connect()
+    }
   }
 
   /** @internal */
@@ -360,6 +368,19 @@ export class Consumer extends EventEmitter {
     const delay = expBackoff(retryLow, retryHigh, this._retryCount++)
     this._retryTimer = setTimeout(this._connect, delay)
   }
+
+  /**
+   * Starts the consumer if it is currently stopped.
+   * When created with lazy=true, begin consuming.
+   */
+  start(): void {
+    if (this._readyState !== READY_STATE.CLOSED) {
+      return
+    }
+
+    this._readyState = READY_STATE.CONNECTING
+    this._connect()
+  }  
 
   /** Stop consuming messages. Close the channel once all pending message
    * handlers have settled. If called while the Connection is reconnecting,
