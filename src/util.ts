@@ -15,7 +15,7 @@ export interface Deferred<T=any> {
 
 /** @internal */
 export function createDeferred<T=any>(noUncaught?: boolean): Deferred<T> {
-  let dfd: any = {}
+  const dfd: any = {}
   dfd.promise = new Promise((resolve, reject) => {
     dfd.resolve = resolve
     dfd.reject = reject
@@ -49,8 +49,8 @@ export function expBackoff(step: number, high: number, attempts: number, exp=2):
 
 /** @internal */
 export function pick(src: any, keys: string[]): any {
-  let dest: any = {}
-  for (let key of keys) {
+  const dest: any = {}
+  for (const key of keys) {
     dest[key] = src[key]
   }
   return dest
@@ -135,7 +135,6 @@ export class EncoderStream<T=unknown> extends Writable {
     if (!this._cur) return
     const [it, cb] = this._cur
     let res
-    // @ts-ignore Added in node v15.2.0, v14.17.0
     let ok = !this._out.writableNeedDrain
     try {
       // if Nagle's algorithm is enabled, this will reduce latency

@@ -186,7 +186,7 @@ const STRUCT = (def: Array<[key: string, ptype: CodecType] | CodecType>) => ({
     return size
   },
   decode(src: Buffer, offset: number): Decoded<Record<string, unknown>> {
-    let result: Record<string, any> = {}
+    const result: Record<string, any> = {}
     let field, key, ptype, props
     for (field of def) {
       if (Array.isArray(field)) {
@@ -341,8 +341,8 @@ const TYPE = {
       return 4 + len
     },
     decode(src: Buffer, offset: number): Decoded<Buffer> {
-      let total = offset + 4 + src.readUInt32BE(offset)
-      let val = src.slice(offset + 4, total)
+      const total = offset + 4 + src.readUInt32BE(offset)
+      const val = src.slice(offset + 4, total)
       return [val, total]
     },
     encode(out: Buffer, val: Buffer|string|null|undefined, offset: number) {
@@ -385,15 +385,15 @@ const TYPE = {
       return 4 + len
     },
     decode(src: Buffer, offset: number): Decoded<string> {
-      let total = offset + 4 + src.readUInt32BE(offset)
-      let val = src.toString('utf8', offset + 4, total)
+      const total = offset + 4 + src.readUInt32BE(offset)
+      const val = src.toString('utf8', offset + 4, total)
       return [val, total]
     },
     encode(out: Buffer, val: undefined|string, offset: number) {
       if (val == null)
         val = ''
       // truncate really long strings
-      let len = Math.min(Buffer.byteLength(val), 0xffffffff)
+      const len = Math.min(Buffer.byteLength(val), 0xffffffff)
       out.writeUInt32BE(len, offset)
       out.write(val, offset + 4, len, 'utf8')
       return 4 + offset + len
@@ -411,7 +411,7 @@ const TYPE = {
   ARRAY: {id: 65,
     sizeof(arr: Array<unknown>) {
       let bytes = 4
-      for (let el of arr) {
+      for (const el of arr) {
         const etype = getBestType(el)
         if (!etype) continue // not encodable
         bytes += 1 + etype.sizeof(el)
@@ -471,7 +471,7 @@ const TYPE = {
       return [table, nextOffset]
     },
     encode(out: Buffer, val: undefined|Record<string, unknown>, offset: number) {
-      let start = offset
+      const start = offset
       offset += 4
       const it = val instanceof Map ? val.entries()
         : val != null ? Object.entries(val) : []
@@ -719,7 +719,7 @@ export async function decodeFrame(read: (bytes: number) => Promise<Buffer>): Pro
     const bodySize = Number(payloadBuffer.readBigUint64BE(4))
     const bits = payloadBuffer.readUInt16BE(12)
     let offset = 14
-    let fields: Record<string, any> = {}
+    const fields: Record<string, any> = {}
     let key, ptype, mask, val
     for ([key, ptype, mask] of CONTENT_PROPS) {
       if (bits & mask) {

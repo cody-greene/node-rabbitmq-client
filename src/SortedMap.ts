@@ -73,7 +73,7 @@ export default class SortedMap<K, V> implements Map<K, V> {
   /** Traverse keys, breadth-first */
   *bfs() {
     if (this._root === Node.NIL) return
-    let queue = [this._root]
+    const queue = [this._root]
     while (queue.length) {
       const next = queue.shift()!
       yield next.key
@@ -158,6 +158,7 @@ export default class SortedMap<K, V> implements Map<K, V> {
   }
 
   private _iterator<R>(get: (node: Node<K, V>) => R): IterableIterator<R> {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     const tree = this
     let node = Node.NIL
     let started = false

@@ -99,7 +99,7 @@ export class Connection extends EventEmitter {
   _state: {
     channelMax: number,
     frameMax: number,
-    heartbeatTimer?: NodeJS.Timer,
+    heartbeatTimer?: NodeJS.Timeout,
     /** Received data since last heartbeat */
     hasRead?: boolean,
     /** Sent data since last heartbeat */
@@ -259,7 +259,7 @@ export class Connection extends EventEmitter {
     let _ch: Channel|undefined
     let pendingSetup: Promise<Channel>|undefined
     let isClosed = false
-    let maxAttempts = props.maxAttempts || 1
+    const maxAttempts = props.maxAttempts || 1
     const emitter = new EventEmitter()
 
     const setup = async () => {
@@ -509,7 +509,7 @@ export class Connection extends EventEmitter {
         // still alive
       } else if (frame.type === FrameType.METHOD) {
         switch (frame.methodId) {
-          case Cmd.ConnectionClose:
+          case Cmd.ConnectionClose: {
             if (this._socket.writable) {
               this._writeMethod({
                 type: FrameType.METHOD,
@@ -525,7 +525,7 @@ export class Connection extends EventEmitter {
             const msg = souceMethod + frame.params.replyText
             this._socket.emit('error', new AMQPConnectionError(strcode, msg))
             break
-          case Cmd.ConnectionCloseOK:
+          } case Cmd.ConnectionCloseOK:
             // just wait for the socket to fully close
             break
           case Cmd.ConnectionBlocked:
@@ -566,7 +566,7 @@ export class Connection extends EventEmitter {
 
   /** @internal */
   private _reset(err: Error): void {
-    for (let ch of this._state.leased.values())
+    for (const ch of this._state.leased.values())
       ch._clear(err)
     this._state.leased.clear()
     this._checkEmpty()
@@ -585,7 +585,7 @@ export class Connection extends EventEmitter {
 
   /** @internal */
   async _lazy(): Promise<Channel> {
-    let ch = this._state.lazyChannel
+    const ch = this._state.lazyChannel
     if (ch instanceof Promise) {
       return ch
     }
