@@ -20,7 +20,7 @@ jobs:
       matrix:
         # See supported Node.js release schedule at:
         # https://nodejs.org/en/about/previous-releases
-        node-version: [18, 20]
+        node-version: [18, 20, 22]
 
     services:
       rabbitmq:
