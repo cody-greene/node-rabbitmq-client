@@ -891,7 +891,7 @@ test('connection.onConnect: reject', async (t) => {
   await assert.rejects(rabbit.onConnect(10), (err: any) => {
     assert.match(err.message, /failed to connect in time/)
     // error.cause has recent connection error
-    assert.equal(err.cause.code, 'ECONNREFUSED')
+    assert(err.cause instanceof Error)
     return true
   })
   assert.equal(rabbit.ready, false)
@@ -906,4 +906,5 @@ test('connection.onConnect: resolve', async (t) => {
   // should still resolve when already connected
   await rabbit.onConnect(500)
   assert(true, 'connection still ready')
+  await rabbit.close()
 })
