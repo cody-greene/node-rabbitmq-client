@@ -1,6 +1,40 @@
+## v5.0.0
+### BREAKING CHANGES:
+#### 6766969 drop support for node 16
+Node 16 hit end-of-life on 2023-09-11. Typescript compiler target has been
+updated accordingly.
+
+#### 8000e78 rm publisher.publish()
+This method was just an alias for `send()` and has been deprecated for quite a
+while. To migrate just find & replace.
+
+#### 3bbfc87 consumer reply forces exchange=""
+See discussion in https://github.com/cody-greene/node-rabbitmq-client/issues/42
+
+The reply function provided to consumer handlers now forces the
+`exchange` argument to an empty string.
+
+If you want to publish to a different exchange, then use a dedicated publisher.
+This is already the default behavior so unless you're using
+`reply(msg, {exchange: 'whatever'})` you don't have to change anything.
+
+```javascript
+const pub = rabbit.createPublisher()
+
+const sub = rabbit.createConsumer({queue: 'myqueue'}, async (msg, reply) => {
+  reply('my response') // GOOD
+  reply('my response', {exchange: 'other'}) // BAD
+  await pub.send({exchange: 'other'}, 'my response') // GOOD
+})
+```
+
+### Features
+- a866874 (#58) `connection.onConnect()` Returns a promise which is resolved when the
+  connection is established
+
 ## v4.6.0
 
-## Features
+### Features
 - Add lazy consumer options (#51): Start or restart a consumer with `sub.start()`
 
 ## v4.5.4
