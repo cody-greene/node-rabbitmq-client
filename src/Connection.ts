@@ -702,7 +702,7 @@ export class Connection extends EventEmitter {
         }
         resolve()
       }
-      if (timeout >= 0) {
+      if (timeout > 0) {
          timer = setTimeout(() => {
           this.removeListener('connection', onConnection)
           this.removeListener('error', onError)
