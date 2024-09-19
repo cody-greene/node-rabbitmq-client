@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import Connection, {AsyncMessage} from '../src'
 import {createServer} from 'node:net'
-import {expectEvent, createDeferred, Deferred} from '../src/util'
+import {expectEvent, createDeferred, Deferred, READY_STATE} from '../src/util'
 import {MethodFrame, DataFrame, Cmd, FrameType} from '../src/codec'
 import {useFakeServer} from './util'
 
@@ -221,7 +221,7 @@ test('will reconnect when connection.close is received from the server', async (
   await rabbit.close()
 })
 
-test('will reconnect when receiving a frame for an unexpected channel', {only: true}, async () => {
+test('will reconnect when receiving a frame for an unexpected channel', async () => {
   const [port, server] = await useFakeServer([
     async (socket, next) => {
       let frame
@@ -886,4 +886,25 @@ test('client-side frame size checks', async () => {
   await rabbit.close()
 })
 
-// TODO codec
+test('connection.onConnect: reject', async (t) => {
+  const rabbit = new Connection('amqp://wrong:password@127.0.0.1:5672')
+  await assert.rejects(rabbit.onConnect(10), (err: any) => {
+    assert.match(err.message, /failed to connect in time/)
+    // error.cause has recent connection error
+    assert(err.cause instanceof Error)
+    return true
+  })
+  assert.equal(rabbit.ready, false)
+  // reject immediately when already closed
+  await assert.rejects(rabbit.onConnect(10), /closed by client/)
+})
+
+test('connection.onConnect: resolve', async (t) => {
+  const rabbit = new Connection(RABBITMQ_URL)
+  await rabbit.onConnect(500)
+  assert(rabbit.ready, 'connection ready')
+  // should still resolve when already connected
+  await rabbit.onConnect(500)
+  assert(true, 'connection still ready')
+  await rabbit.close()
+})

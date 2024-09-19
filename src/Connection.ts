@@ -39,7 +39,7 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promi
 
 const CLIENT_PROPERTIES = {
   product: 'rabbitmq-client',
-  version: '4.5.3',
+  version: '4.6.0',
   platform: `node.js-${process.version}`,
   capabilities: {
     'basic.nack': true,
@@ -664,6 +664,61 @@ export class Connection extends EventEmitter {
   /** True if the connection is established and unblocked. See also {@link Connection#on:BLOCKED | Connection#on('connection.blocked')}) */
   get ready(): boolean {
     return this._state.readyState === READY_STATE.OPEN && !this._socket.writableCorked
+  }
+
+  /**
+   * Returns a promise which is resolved when the connection is established.
+   * WARNING: if timeout=0 and you call close() before the client can connect,
+   * then this promise may never resolve!
+   * @param timeout Milliseconds to wait before giving up and rejecting the
+   * promise. Use 0 for no timeout.
+   * @param disableAutoClose By default this will automatically call
+   * `connection.close()` when the timeout is reached. If
+   * disableAutoClose=true, then connection will instead continue to retry
+   * after this promise is rejected. You can call `close()` manually.
+  **/
+  onConnect(timeout = 10_000, disableAutoClose = false) :Promise<void> {
+    if (this.ready) {
+      return Promise.resolve()
+    }
+    if (this._state.readyState >= READY_STATE.CLOSING) {
+      return Promise.reject(new Error('RabbitMQ failed to connect in time; Connection closed by client'))
+    }
+    // create this early for a useful stack trace
+    const pessimisticError = new Error('RabbitMQ failed to connect in time')
+    return new Promise((resolve, reject) => {
+      let timer :NodeJS.Timeout|undefined
+      // capture the most recent connection Error so it can be included in the
+      // final rejection
+      let lastError: unknown
+      const onError = (err: unknown) => {
+        lastError = err
+      }
+      const onConnection = () => {
+        this.removeListener('connection', onConnection)
+        this.removeListener('error', onError)
+        if (timer != null) {
+          clearTimeout(timer)
+        }
+        resolve()
+      }
+      if (timeout > 0) {
+         timer = setTimeout(() => {
+          this.removeListener('connection', onConnection)
+          this.removeListener('error', onError)
+          if (!disableAutoClose) {
+           /* close should never throw but catch and ignore just in case */
+            this.close().catch(() => {})
+          }
+          if (lastError) {
+            pessimisticError.cause = lastError
+          }
+          reject(pessimisticError)
+        }, timeout)
+      }
+      this.on('error', onError)
+      this.on('connection', onConnection)
+    })
   }
 }
 
