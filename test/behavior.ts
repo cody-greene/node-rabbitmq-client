@@ -605,7 +605,7 @@ test('Connection#createPublisher()', async () => {
   assert.ok(true, 'created publisher')
 
   // should emit 'basic.return' events
-  await pro.publish({routingKey: '__not_found_7315197c1ab0e5f6__', mandatory: true},
+  await pro.send({routingKey: '__not_found_7315197c1ab0e5f6__', mandatory: true},
     'my returned message')
   assert.ok(true, 'publish acknowledged')
   const msg0 = await expectEvent(pro, 'basic.return')
@@ -613,7 +613,7 @@ test('Connection#createPublisher()', async () => {
     'got returned message')
 
   // should establish queues, bindings
-  await pro.publish({routingKey: queue},
+  await pro.send({routingKey: queue},
     'my good message')
   assert.ok(true, 'publish acknowledged')
   const ch = await rabbit.acquire()
@@ -625,27 +625,27 @@ test('Connection#createPublisher()', async () => {
   // should recover after channel error
   let err0
   try {
-    await pro.publish({exchange: '__not_found_7315197c1ab0e5f6__'}, '')
+    await pro.send({exchange: '__not_found_7315197c1ab0e5f6__'}, '')
   } catch (err) {
     err0 = err
   }
   assert.equal(err0?.code, 'NOT_FOUND',
     'caused a channel error')
-  await pro.publish({routingKey: queue}, '')
+  await pro.send({routingKey: queue}, '')
   assert.ok(true, 'published on new channel')
 
   // should recover after connection loss
   rabbit._socket.destroy()
   await expectEvent(rabbit, 'error')
   assert.ok(true, 'connection reset')
-  await pro.publish({routingKey: queue}, '')
+  await pro.send({routingKey: queue}, '')
   assert.ok(true, 'published after connection error')
 
   // should not publish after close()
   await pro.close()
   let err1
   try {
-    await pro.publish({routingKey: queue}, '')
+    await pro.send({routingKey: queue}, '')
   } catch (err) {
     err1 = err
   }
@@ -660,8 +660,8 @@ test('Connection#createPublisher() concurrent publishes should trigger one setup
   const pro = rabbit.createPublisher()
 
   await Promise.all([
-    pro.publish({routingKey: '__not_found_7953ec8de0da686e__'}, ''),
-    pro.publish({routingKey: '__not_found_7953ec8de0da686e__'}, '')
+    pro.send({routingKey: '__not_found_7953ec8de0da686e__'}, ''),
+    pro.send({routingKey: '__not_found_7953ec8de0da686e__'}, '')
   ])
 
   assert.equal(rabbit._state.leased.size, 1,
@@ -681,7 +681,7 @@ test('Publisher should retry failed setup', async () => {
   })
 
   const [res] = await Promise.allSettled([
-    pro.publish({routingKey: queue}, 'hello')
+    pro.send({routingKey: queue}, 'hello')
   ])
 
   assert.equal(res.status, 'rejected', 'setup failed 1st time')
@@ -689,7 +689,7 @@ test('Publisher should retry failed setup', async () => {
   const ch = await rabbit.acquire()
   await ch.queueDeclare({queue, exclusive: true}) // auto-delete after test
 
-  await pro.publish({routingKey: queue}, 'hello')
+  await pro.send({routingKey: queue}, 'hello')
   assert.ok(true, 'setup completed and message published')
 
   await pro.close()
@@ -707,13 +707,13 @@ test('Publisher (maxAttempts) should retry failed publish', async () => {
     exchanges: [{exchange}]
   })
   // establish the internal Channel and exchange (lazy setup)
-  await pro.publish({exchange}, 'test1')
+  await pro.send({exchange}, 'test1')
   // deleting the exchange should cause the next publish to fail
   await ch.exchangeDelete({exchange})
 
   const [err] = await Promise.all([
     expectEvent(pro, 'retry'),
-    pro.publish({exchange}, 'test2')
+    pro.send({exchange}, 'test2')
   ])
   assert.equal(err.code, 'NOT_FOUND', 'got retry event')
   assert.ok(true, 'publish succeeded eventually')

@@ -18,7 +18,7 @@ test('basic rpc setup', async () => {
   })
 
   await expectEvent(server, 'ready')
-  const res = await client.publish(queue, 'PING')
+  const res = await client.send(queue, 'PING')
   assert.equal(res.body, 'PONG', 'got the response')
 
   await client.close()
@@ -39,7 +39,7 @@ test('rpc failure modes', async () => {
   // 'setup can fail'
   let err
   try {
-    await client.publish({routingKey: queue}, '')
+    await client.send({routingKey: queue}, '')
   } catch (_err) {
     err = _err
   }
@@ -51,7 +51,7 @@ test('rpc failure modes', async () => {
 
   // 'response can timeout'
   try {
-    await client.publish({routingKey: queue}, '')
+    await client.send({routingKey: queue}, '')
   } catch (_err) {
     err = _err
   }
@@ -59,9 +59,9 @@ test('rpc failure modes', async () => {
 
   // 'can encounter a ChannelError'
   const [r1, r2] = await Promise.allSettled([
-    client.publish({routingKey: queue}, ''),
+    client.send({routingKey: queue}, ''),
     // should fail since the exchange does not exist
-    client.publish({exchange: '__bc84b490a8dab5a0__', routingKey: queue}, ''),
+    client.send({exchange: '__bc84b490a8dab5a0__', routingKey: queue}, ''),
   ])
   assert.equal(r1.status, 'rejected')
   assert.equal(r1.reason.code, 'RPC_CLOSED', 'channel closed before timeout')
@@ -75,7 +75,7 @@ test('rpc failure modes', async () => {
   }, async (msg, reply) => {
     await reply('PONG')
   })
-  const res = await client.publish(queue, 'PING')
+  const res = await client.send(queue, 'PING')
   assert.equal(res.body, 'PONG')
 
   await server.close()

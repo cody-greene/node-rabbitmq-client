@@ -304,7 +304,6 @@ export class Connection extends EventEmitter {
     }
 
     return Object.assign(emitter, {
-      publish: send,
       send: send,
       close() {
         isClosed = true
@@ -783,8 +782,6 @@ export interface PublisherProps {
  * ```
  */
 export interface Publisher extends EventEmitter {
-  /** @deprecated Alias for {@link Publisher#send} */
-  publish(envelope: string|Envelope, body: MessageBody): Promise<void>;
   /** {@inheritDoc Channel#basicPublish} */
   send(envelope: Envelope, body: MessageBody): Promise<void>;
   /** Send directly to a queue. Same as `send({routingKey: queue}, body)` */
