@@ -3,6 +3,7 @@ import {DataFrame, decodeFrame} from '../src/codec'
 import {expectEvent, createAsyncReader, createDeferred} from '../src/util'
 import Connection, {ConsumerProps, AsyncMessage, ConsumerStatus} from '../src'
 import {PassThrough} from 'node:stream'
+import { after } from 'node:test'
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -29,7 +30,7 @@ async function useFakeServer(cb: ConnectionCallback|Array<ConnectionCallback>) {
   const server = createServer()
   server.listen()
   await expectEvent(server, 'listening')
-  // t.teardown(() => server.close())
+  after(() => server.close())
   const addr = server.address()
   if (addr == null || typeof addr == 'string')
     throw new Error('expected server addr obj')
@@ -89,4 +90,12 @@ function createIterableConsumer(rabbit: Connection, opt: ConsumerProps) {
   })
 }
 
-export {useFakeServer, sleep, createIterableConsumer}
+interface SomeResource {
+  close() :void
+}
+function autoTeardown<T extends SomeResource>(obj: T) :T {
+  after(() => { obj.close() })
+  return obj
+}
+
+export {useFakeServer, sleep, createIterableConsumer, autoTeardown}
