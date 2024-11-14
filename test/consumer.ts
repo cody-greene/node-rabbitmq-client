@@ -3,22 +3,22 @@ import assert from 'node:assert/strict'
 import Connection, {AsyncMessage, ConsumerStatus} from '../src'
 import {PREFETCH_EVENT} from '../src/Consumer'
 import {expectEvent, createDeferred, Deferred, READY_STATE} from '../src/util'
-import {sleep, createIterableConsumer} from './util'
+import {sleep, createIterableConsumer, autoTeardown} from './util'
 
 type TMParams = [Deferred<void>, AsyncMessage]
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 
 test('Consumer#close() waits for setup to complete', async () => {
-  const rabbit = new Connection({url: RABBITMQ_URL, retryLow: 25})
+  const rabbit = autoTeardown(new Connection({url: RABBITMQ_URL, retryLow: 25}))
   const queue = '__test_b1d57ae9eb91df85__'
 
-  const consumer = rabbit.createConsumer({
+  const consumer = autoTeardown(rabbit.createConsumer({
     queue: queue,
     queueOptions: {exclusive: true},
   }, async () => {
 
-  })
+  }))
 
   // wait for setup to actually start
   await sleep(1)
@@ -28,29 +28,27 @@ test('Consumer#close() waits for setup to complete', async () => {
     consumer.close(),
   ])
   assert.ok(true, 'got "ready" event while closing')
-
-  await rabbit.close()
 })
 
 test('Connection#createConsumer()', async () => {
-  const rabbit = new Connection({url: RABBITMQ_URL, retryLow: 25})
+  const rabbit = autoTeardown(new Connection({url: RABBITMQ_URL, retryLow: 25}))
 
   const queue = '__test_df1865ed59a6b6272b14206b85863099__'
   const exchange = '__test_6d074e50d427e75a__'
 
   //const dfd = createDeferred<void>()
-  const consumer = createIterableConsumer(rabbit, {
+  const consumer = autoTeardown(createIterableConsumer(rabbit, {
     requeue: true,
     queue: queue,
     queueOptions: {exclusive: true},
     exchanges: [{autoDelete: true, exchange, type: 'topic'}],
     queueBindings: [{queue, exchange, routingKey: 'audit.*'}]
-  })
+  }))
 
   await expectEvent(consumer, 'ready')
   assert.ok(true, 'consumer is ready')
 
-  const ch = await rabbit.acquire()
+  const ch = autoTeardown(await rabbit.acquire())
 
   // ack nack
   await ch.basicPublish({exchange, routingKey: 'audit.test'}, 'red fish')
@@ -72,7 +70,6 @@ test('Connection#createConsumer()', async () => {
   assert.equal(messageCount, 0, 'queue is empty')
   await expectEvent(consumer, 'ready')
   assert.ok(true, 'consumer is ready again')
-  await ch.close()
 
   // can recover after connection loss
   rabbit._socket.destroy()
@@ -89,46 +86,38 @@ test('Connection#createConsumer()', async () => {
   assert.equal(res.reason.code, 'NOT_FOUND', 'caused a channel error')
   await expectEvent(consumer, 'ready')
   assert.ok(true, 'consumer is ready for the last time')
-
-  await consumer.close()
-  await rabbit.close()
 })
 
 test('Consumer does not create duplicates when setup temporarily fails', async () => {
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
     retryHigh: 25
-  })
+  }))
   const queue = '__test1524e4b733696e9c__'
-  const consumer = rabbit.createConsumer({
+  const consumer = autoTeardown(rabbit.createConsumer({
     queue: queue,
     // setup will fail until queue is created
     queueOptions: {passive: true}
-  }, () => { /* do nothing */ })
+  }, () => { /* do nothing */ }))
 
   const err = await expectEvent(consumer, 'error')
   assert.equal(err.code, 'NOT_FOUND', 'setup should fail at first')
 
-  const ch = await rabbit.acquire()
-  await ch.queueDeclare({queue, exclusive: true}) // auto-deleted
+  await rabbit.queueDeclare({queue, exclusive: true}) // auto-deleted
   await expectEvent(consumer, 'ready')
   assert.ok(true, 'consumer setup successful')
   consumer.once('ready', () => {
     assert.fail('expected only ONE ready event')
   })
-
-  await ch.close()
-  await consumer.close()
-  await rabbit.close()
 })
 
 test('Consumer waits for in-progress jobs to complete before reconnecting', async () => {
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
     retryLow: 1, retryHigh: 1
-  })
+  }))
   const queue = '__test1c23944c0f14a28f__'
-  const consumer = rabbit.createConsumer({
+  const consumer = autoTeardown(rabbit.createConsumer({
     queue: queue,
     queueOptions: {exclusive: true},
     qos: {prefetchCount: 1}
@@ -137,10 +126,10 @@ test('Consumer waits for in-progress jobs to complete before reconnecting', asyn
     consumer.emit('test.message', [dfd, msg])
     // complete the job at some later time with dfd.resolve()
     return dfd.promise
-  })
+  }))
 
   await expectEvent(consumer, 'ready')
-  const ch = await rabbit.acquire()
+  const ch = autoTeardown(await rabbit.acquire())
   await ch.basicPublish(queue, 'red')
   const [job1, msg1] = await expectEvent(consumer, 'test.message')
   assert.equal(msg1.body, 'red', 'consumed a message')
@@ -158,19 +147,15 @@ test('Consumer waits for in-progress jobs to complete before reconnecting', asyn
   job2.resolve()
   assert.equal(msg2.body, 'red')
   assert.equal(msg2.redelivered, true, 'consumed redelivered message after delay')
-
-  await consumer.close()
-  await ch.close()
-  await rabbit.close()
 })
 
 test('Consumer should limit handler concurrency', async () => {
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
     retryHigh: 25,
-  })
-  const queue = '__test1c23944c0f14a28f__'
-  const consumer = rabbit.createConsumer({
+  }))
+  const queue = '__test1c23944c0f14a28a__'
+  const consumer = autoTeardown(rabbit.createConsumer({
     queue: queue,
     queueOptions: {exclusive: true},
     concurrency: 1,
@@ -179,12 +164,12 @@ test('Consumer should limit handler concurrency', async () => {
     consumer.emit('test.message', [dfd, msg])
     // complete the job at some later time with dfd.resolve()
     return dfd.promise
-  })
+  }))
 
   type TMParams = [Deferred<void>, AsyncMessage]
 
   await expectEvent(consumer, 'ready')
-  const ch = await rabbit.acquire()
+  const ch = autoTeardown(await rabbit.acquire())
   await Promise.all([
     ch.basicPublish(queue, 'red'),
     ch.basicPublish(queue, 'blue'),
@@ -223,19 +208,15 @@ test('Consumer should limit handler concurrency', async () => {
   assert.equal(msg3.body, 'green', 'consumed 3rd message')
   assert.equal(msg3.redelivered, true, 'redelivered=true')
   job3.resolve()
-
-  await consumer.close()
-  await ch.close()
-  await rabbit.close()
 })
 
 test('Consumer concurrency with noAck=true', async () => {
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
     retryHigh: 25,
-  })
+  }))
   const queue = '__test1c23944c0f14a28f__'
-  const consumer = rabbit.createConsumer({
+  const consumer = autoTeardown(rabbit.createConsumer({
     queue: queue,
     noAck: true,
     queueOptions: {exclusive: true},
@@ -245,10 +226,10 @@ test('Consumer concurrency with noAck=true', async () => {
     consumer.emit('test.message', [dfd, msg])
     // complete the job at some later time with dfd.resolve()
     return dfd.promise
-  })
+  }))
 
   await expectEvent(consumer, 'ready')
-  const ch = await rabbit.acquire()
+  const ch = autoTeardown(await rabbit.acquire())
 
   await Promise.all([
     ch.basicPublish(queue, 'red'),
@@ -278,33 +259,31 @@ test('Consumer concurrency with noAck=true', async () => {
   job2.resolve()
 
   await consumerClosed
-  await ch.close()
-  await rabbit.close()
 })
 
 test('Consumer return codes', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
   const queue = '__test_03f0726440598228'
   const deadqueue = '__test_fadb49f36193d615'
   const exchange = '__test_db6d7203284a44c2'
-  const sub = createIterableConsumer(rabbit, {
+  const sub = autoTeardown(createIterableConsumer(rabbit, {
     queue,
     requeue: false,
     queueOptions: {
       exclusive: true,
       arguments: {'x-dead-letter-exchange': exchange}
     },
-  })
-  const dead = createIterableConsumer(rabbit, {
+  }))
+  const dead = autoTeardown(createIterableConsumer(rabbit, {
     queue: deadqueue,
     queueOptions: {exclusive: true},
     queueBindings: [{exchange, routingKey: queue}],
     exchanges: [{exchange, type: 'fanout', autoDelete: true}]
-  })
+  }))
 
   await expectEvent(sub, 'ready')
   await expectEvent(dead, 'ready')
-  const ch = await rabbit.acquire()
+  const ch = autoTeardown(await rabbit.acquire())
 
   // can drop by default
   await ch.basicPublish(queue, 'red')
@@ -330,19 +309,14 @@ test('Consumer return codes', async () => {
   const msg5 = await dead.read()
   assert.equal(msg5.body, 'blue', 'message dropped')
   msg5.resolve()
-
-  await ch.close()
-  await sub.close()
-  await dead.close()
-  await rabbit.close()
 })
 
 test('Consumer stats', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const pub = rabbit.createPublisher({confirm: true})
-  const sub = createIterableConsumer(rabbit, {
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const pub = autoTeardown(rabbit.createPublisher({confirm: true}))
+  const sub = autoTeardown(createIterableConsumer(rabbit, {
     queueOptions: {exclusive: true}
-  })
+  }))
 
   await expectEvent(sub, 'ready')
 

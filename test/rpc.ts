@@ -7,28 +7,24 @@ import {autoTeardown, createIterableConsumer} from './util'
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 
 test('basic rpc setup', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
   const queue = '__test_284f68e427a918b2__'
-  const client = rabbit.createRPCClient()
-  const server = rabbit.createConsumer({
+  const client = autoTeardown(rabbit.createRPCClient())
+  const server = autoTeardown(rabbit.createConsumer({
     queue: queue,
     queueOptions: {exclusive: true}
   }, async (msg, reply) => {
     await reply('PONG')
-  })
+  }))
 
   await expectEvent(server, 'ready')
   const res = await client.send(queue, 'PING')
   assert.equal(res.body, 'PONG', 'got the response')
-
-  await client.close()
-  await server.close()
-  await rabbit.close()
 })
 
 test('rpc can timeout', async () => {
   const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
-  const queue = '__test_52ef4e140113eb53__'
+  const queue = '__test_52ef4e140113eb58__'
   const client = autoTeardown(rabbit.createRPCClient({
     confirm: true,
     timeout: 10,
@@ -41,13 +37,13 @@ test('rpc can timeout', async () => {
 })
 
 test('rpc failure modes', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
   const queue = '__test_52ef4e140113eb53__'
-  const client = rabbit.createRPCClient({
+  const client = autoTeardown(rabbit.createRPCClient({
     confirm: true,
     // fail until queue is created
     queues: [{queue, passive: true}]
-  })
+  }))
 
   // 'setup can fail'
   let err
@@ -72,31 +68,27 @@ test('rpc failure modes', async () => {
   assert.equal(r2.reason.code, 'NOT_FOUND', 'caused channel error')
 
   // 'should still work after a few failures'
-  const server = rabbit.createConsumer({
+  const server = autoTeardown(rabbit.createConsumer({
     queue: queue,
     queueOptions: {exclusive: true}
   }, async (msg, reply) => {
     await reply('PONG')
-  })
+  }))
   const res = await client.send(queue, 'PING')
   assert.equal(res.body, 'PONG')
-
-  await server.close()
-  await client.close()
-  await rabbit.close()
 })
 
 test('rpc retry (maxAttempts)', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
 
   const request = Symbol('request')
   const queue = '__test_f6ad3342820fb0c7'
-  const server = rabbit.createConsumer({queue, queueOptions: {exclusive: true}}, (msg, reply) => {
+  const server = autoTeardown(rabbit.createConsumer({queue, queueOptions: {exclusive: true}}, (msg, reply) => {
     server.emit(request, [msg, reply])
-  })
+  }))
   await expectEvent(server, 'ready')
 
-  const client = rabbit.createRPCClient({confirm: true, maxAttempts: 2, timeout: 50})
+  const client = autoTeardown(rabbit.createRPCClient({confirm: true, maxAttempts: 2, timeout: 50}))
 
   // 1 success
   const [res1] = await Promise.all([
@@ -132,21 +124,17 @@ test('rpc retry (maxAttempts)', async () => {
   ])
   assert.equal(res3.status, 'rejected')
   assert.equal(res3.reason.code, 'RPC_TIMEOUT', 'timeout on 2nd try')
-
-  await client.close()
-  await server.close()
-  await rabbit.close()
 })
 
 test('rpc discard late responses', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
   const queue = 'f5f8cf8b737f6cdb'
-  const server = createIterableConsumer(rabbit, {
+  const server = autoTeardown(createIterableConsumer(rabbit, {
     queue,
     queueOptions: {exclusive: true}
-  })
+  }))
 
-  const client = rabbit.createRPCClient({confirm: true, timeout: 50})
+  const client = autoTeardown(rabbit.createRPCClient({confirm: true, timeout: 50}))
 
   await Promise.allSettled([
     client.send(queue, 'ping'),
@@ -168,8 +156,4 @@ test('rpc discard late responses', async () => {
 
   const r1 = await sending
   assert.equal(r1.body, 'bong')
-
-  await client.close()
-  await server.close()
-  await rabbit.close()
 })

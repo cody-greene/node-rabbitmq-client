@@ -4,15 +4,15 @@ import Connection, {AsyncMessage} from '../src'
 import {createServer} from 'node:net'
 import {expectEvent, createDeferred, Deferred, READY_STATE} from '../src/util'
 import {MethodFrame, DataFrame, Cmd, FrameType} from '../src/codec'
-import {useFakeServer} from './util'
+import {autoTeardown, useFakeServer} from './util'
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
 
 test('can publish and get messages', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
   //rabbit.on('error', (err) => { t.error(err) })
 
-  const ch = await rabbit.acquire()
+  const ch = autoTeardown(await rabbit.acquire())
   const {queue} = await ch.queueDeclare({exclusive: true})
 
   const m0 = await ch.basicGet({queue})
@@ -34,14 +34,11 @@ test('can publish and get messages', async () => {
   assert.equal(m2.contentType, 'text/plain')
   assert.equal(m2.body, 'my data')
   ch.basicAck(m2)
-
-  await ch.close()
-  await rabbit.close()
 })
 
 test('can publish confirmed messages', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
 
   await ch.confirmSelect()
   assert.ok(true, 'enabled confirm mode')
@@ -50,9 +47,6 @@ test('can publish confirmed messages', async () => {
 
   await ch.basicPublish({routingKey: queue}, 'my data')
   assert.ok(true, 'published message')
-
-  await ch.close()
-  await rabbit.close()
 })
 
 test('Connection#close() will gracefully end the connection', async () => {
@@ -68,10 +62,10 @@ test('Connection#close() will gracefully end the connection', async () => {
 })
 
 test('Connection#close() should wait for channels to close (after reconnections)', async () => {
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
     retryLow: 25
-  })
+  }))
 
   await expectEvent(rabbit, 'connection')
   assert.ok(true, 'established connection')
@@ -84,12 +78,10 @@ test('Connection#close() should wait for channels to close (after reconnections)
   await expectEvent(rabbit, 'connection')
   assert.ok(true, 're-established connection')
 
-  const ch = await rabbit.acquire()
+  const ch = autoTeardown(await rabbit.acquire())
   rabbit.close().catch(err => assert.ifError(err))
   await ch.confirmSelect()
   await ch.basicQos({prefetchCount: 1})
-  await ch.close()
-  await rabbit.close()
 })
 
 test('checks for a protocol version mismatch', async () => {
@@ -124,7 +116,7 @@ test('checks for a protocol version mismatch', async () => {
 
 test('[opt.connectionTimeout] is a time limit on each connection attempt', async () => {
   // create a stub server
-  const server = createServer()
+  const server = autoTeardown(createServer())
   server.listen()
   await expectEvent(server, 'listening')
   const addr = server.address()
@@ -134,17 +126,14 @@ test('[opt.connectionTimeout] is a time limit on each connection attempt', async
     // never respond
   })
 
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     port: addr.port,
     connectionTimeout: 25
-  })
+  }))
 
   const err = await expectEvent(rabbit, 'error')
   assert.equal(err.code, 'CONNECTION_TIMEOUT',
     'should get timeout error')
-
-  server.close()
-  await rabbit.close()
 })
 
 test('will reconnect when connection.close is received from the server', async () => {
@@ -198,12 +187,12 @@ test('will reconnect when connection.close is received from the server', async (
     }
   ])
 
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     //url: RABBITMQ_URL,
     port: port,
     retryLow: 25, // fast reconnect
     connectionName: '__connection.close_test__'
-  })
+  }))
 
   await expectEvent(rabbit, 'connection')
   assert.ok(true, 'established connection')
@@ -217,8 +206,6 @@ test('will reconnect when connection.close is received from the server', async (
 
   await expectEvent(rabbit, 'connection')
   assert.ok(true, 'reconnected')
-
-  await rabbit.close()
 })
 
 test('will reconnect when receiving a frame for an unexpected channel', async () => {
@@ -270,12 +257,12 @@ test('will reconnect when receiving a frame for an unexpected channel', async ()
     }
   ])
 
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     //url: RABBITMQ_URL,
     port: port,
     retryLow: 25, // fast reconnect
     connectionName: '__connection.close_test__'
-  })
+  }))
 
   await expectEvent(rabbit, 'connection')
   assert.ok(true, 'established connection')
@@ -286,13 +273,11 @@ test('will reconnect when receiving a frame for an unexpected channel', async ()
 
   await expectEvent(rabbit, 'connection')
   assert.ok(true, 'reconnected')
-
-  await rabbit.close()
 })
 
 test('handles channel errors', async () => {
   const queue = '__test_e8f4f1d045bc0097__' // this random queue should not exist
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
 
   const ch = await rabbit.acquire()
   assert.ok(true, 'got channel')
@@ -301,13 +286,11 @@ test('handles channel errors', async () => {
     'caught channel error')
   assert.equal(ch.active, false,
     'channel is closed')
-
-  await rabbit.close()
 })
 
 test('publish with confirms are rejected with channel error', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
   await ch.confirmSelect()
   const pending = [
     ch.basicPublish({routingKey: '__not_found_9a1e1bba7f62571d__'}, ''),
@@ -326,42 +309,36 @@ test('publish with confirms are rejected with channel error', async () => {
     assert.equal(r2.reason.code, 'CH_CLOSE', '3rd publish rejected')
   else assert.fail('3rd publish should fail')
   assert.equal(ch.active, false, 'channel is dead')
-
-  await ch.close()
-  await rabbit.close()
 })
 
 test('publish without confirms should emit channel errors on the Connection', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
   const ch = await rabbit.acquire()
   await ch.basicPublish({routingKey: '__not_found_9a1e1bba7f62571d__', exchange: '__not_found_9a1e1bba7f62571d__'}, '')
   const err = await expectEvent(rabbit, 'error')
   assert.equal(err.code, 'NOT_FOUND', 'emitted error')
-  await rabbit.close()
 })
 
 test('basic.ack can emit channel errors', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
   ch.basicAck({deliveryTag: 1}) // does not return a Promise
   const err = await expectEvent(rabbit, 'error')
   assert.equal(err.code, 'PRECONDITION_FAILED', 'unknown delivery tag')
-  await rabbit.close()
 })
 
 test('basic.ack can emit codec errors', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
   // @ts-ignore intentional error
   ch.basicAck({deliveryTag: 'not a number'}) // does not return a Promise
   const err = await expectEvent(rabbit, 'error')
   assert.ok(err instanceof SyntaxError, 'got encoding error')
-  await rabbit.close()
 })
 
 test('handles encoder errors', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
 
   const err = await ch.basicCancel({consumerTag: null as any}).catch(err => err)
   assert.equal(err.message, 'consumerTag is undefined; expected a string',
@@ -379,17 +356,14 @@ test('handles encoder errors', async () => {
   assert.equal(errs[0].message, 'boom')
   assert.equal(errs[1].code, 'CH_CLOSE', 'buffered RPC is rejected')
 
-  const other = await rabbit.acquire()
+  const other = autoTeardown(await rabbit.acquire())
   assert.equal(other.id, ch.id,
     'created a new channel with the same id (old channel was properly closed)')
-
-  await other.close()
-  await rabbit.close()
 })
 
 test('handles encoder errors (while closing)', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
 
   // will explode when encoding
   const bomb: string = {toString() { throw new TypeError('boom') }} as any
@@ -404,12 +378,9 @@ test('handles encoder errors (while closing)', async () => {
   assert.equal(errs[0].message, 'boom')
   assert.equal(errs[1].code, 'CH_CLOSE', 'buffered RPC is rejected')
 
-  const other = await rabbit.acquire()
+  const other = autoTeardown(await rabbit.acquire())
   assert.equal(other.id, ch.id,
     'created a new channel with the same id (old channel was properly closed)')
-
-  await other.close()
-  await rabbit.close()
 })
 
 test('[opt.heartbeat] creates a timeout to detect a dead socket', async () => {
@@ -437,10 +408,10 @@ test('[opt.heartbeat] creates a timeout to detect a dead socket', async () => {
     s1complete = true
   })
 
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     port: port,
     heartbeat: 1
-  })
+  }))
 
   const err = await expectEvent(rabbit, 'error')
   assert.equal(err.code, 'SOCKET_TIMEOUT',
@@ -483,10 +454,10 @@ test('[opt.heartbeat] regularly sends a heartbeat frame on its own', async () =>
     s1complete = true
   })
 
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     port: port,
     heartbeat: 1
-  })
+  }))
 
   const err = await expectEvent(rabbit, 'error')
   assert.equal(err.code, 'CONNECTION_FORCED')
@@ -496,8 +467,8 @@ test('[opt.heartbeat] regularly sends a heartbeat frame on its own', async () =>
 })
 
 test('can create a basic consumer', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
   const {queue} = await ch.queueDeclare({exclusive: true})
 
   const expectedMessages: Deferred<AsyncMessage>[] = [createDeferred(), createDeferred()]
@@ -516,14 +487,11 @@ test('can create a basic consumer', async () => {
 
   await ch.basicCancel({consumerTag})
   assert.ok(true, 'cancelled consumer')
-
-  await ch.close()
-  await rabbit.close()
 })
 
 test('emits basic.return with rejected messages', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
   await ch.basicPublish({
     routingKey: '__basic.return test__',
     mandatory: true
@@ -533,29 +501,23 @@ test('emits basic.return with rejected messages', async () => {
     'msg returned')
   assert.equal(msg.replyText, 'NO_ROUTE',
     'msg is unroutable')
-
-  await ch.close()
-  await rabbit.close()
 })
 
 test('handles zero-length returned messages', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
   const payload = Buffer.alloc(0)
   await ch.basicPublish({mandatory: true, routingKey: '__not_found_7953ec8de0da686e__'}, payload)
   const msg = await expectEvent(ch, 'basic.return')
   assert.equal(msg.replyText, 'NO_ROUTE', 'message returned')
   assert.equal(msg.body.byteLength, 0, 'body is empty')
-
-  await ch.close()
-  await rabbit.close()
 })
 
 test('[opt.maxChannels] can cause acquire() to fail', async () => {
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
     maxChannels: 1
-  })
+  }))
 
   const [r0, r1] = await Promise.allSettled([
     rabbit.acquire(),
@@ -565,12 +527,11 @@ test('[opt.maxChannels] can cause acquire() to fail', async () => {
   assert.equal(r0.status, 'fulfilled', 'ch 1 acquired')
   r0.value.close()
   assert.equal(r1.status, 'rejected', 'ch 2 unavailable')
-  await rabbit.close()
 })
 
 test('Connection#acquire() can time out', async () => {
   // create a stub server
-  const server = createServer()
+  const server = autoTeardown(createServer())
   server.listen()
   await expectEvent(server, 'listening')
   const addr = server.address()
@@ -580,28 +541,19 @@ test('Connection#acquire() can time out', async () => {
     // never respond
   })
 
-  const rabbit = new Connection({port: addr.port, acquireTimeout: 25})
+  const rabbit = autoTeardown(new Connection({port: addr.port, acquireTimeout: 25}))
 
-  try {
-    await rabbit.acquire()
-    assert.fail('expected acquire() to fail')
-  } catch (err) {
-    assert.equal(err.code, 'TIMEOUT',
-      'got timeout error')
-  }
-
-  await rabbit.close()
-  server.close()
+  await assert.rejects(rabbit.acquire(), {code: 'TIMEOUT'})
 })
 
 test('Connection#createPublisher()', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
   const queue = '__test_c77466a747761f46__'
 
-  const pro = rabbit.createPublisher({
+  const pro = autoTeardown(rabbit.createPublisher({
     confirm: true,
     queues: [{queue, exclusive: true}],
-  })
+  }))
   assert.ok(true, 'created publisher')
 
   // should emit 'basic.return' events
@@ -616,9 +568,7 @@ test('Connection#createPublisher()', async () => {
   await pro.send({routingKey: queue},
     'my good message')
   assert.ok(true, 'publish acknowledged')
-  const ch = await rabbit.acquire()
-  const msg1 = await ch.basicGet({queue})
-  await ch.close()
+  const msg1 = await rabbit.basicGet({queue})
   assert.equal(msg1?.body, 'my good message',
     'got published message from temporary queue')
 
@@ -651,13 +601,11 @@ test('Connection#createPublisher()', async () => {
   }
   assert.equal(err1.code, 'CLOSED',
     'failed to publish after close()')
-
-  await rabbit.close()
 })
 
 test('Connection#createPublisher() concurrent publishes should trigger one setup', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const pro = rabbit.createPublisher()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const pro = autoTeardown(rabbit.createPublisher())
 
   await Promise.all([
     pro.send({routingKey: '__not_found_7953ec8de0da686e__'}, ''),
@@ -666,19 +614,16 @@ test('Connection#createPublisher() concurrent publishes should trigger one setup
 
   assert.equal(rabbit._state.leased.size, 1,
     'one channel created')
-
-  await pro.close()
-  await rabbit.close()
 })
 
 test('Publisher should retry failed setup', async () => {
   const queue = '__not_found_7953ec8de0da686e__'
-  const rabbit = new Connection(RABBITMQ_URL)
-  const pro = rabbit.createPublisher({
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const pro = autoTeardown(rabbit.createPublisher({
     confirm: true,
     // setup should fail when the queue does not exist
     queues: [{passive: true, queue}]
-  })
+  }))
 
   const [res] = await Promise.allSettled([
     pro.send({routingKey: queue}, 'hello')
@@ -686,30 +631,24 @@ test('Publisher should retry failed setup', async () => {
 
   assert.equal(res.status, 'rejected', 'setup failed 1st time')
 
-  const ch = await rabbit.acquire()
-  await ch.queueDeclare({queue, exclusive: true}) // auto-delete after test
+  await rabbit.queueDeclare({queue, exclusive: true}) // auto-delete after test
 
   await pro.send({routingKey: queue}, 'hello')
   assert.ok(true, 'setup completed and message published')
-
-  await pro.close()
-  await ch.close()
-  await rabbit.close()
 })
 
 test('Publisher (maxAttempts) should retry failed publish', async () => {
   const exchange = '__test_ce7cea6070c084fe'
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
-  const pro = rabbit.createPublisher({
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const pro = autoTeardown(rabbit.createPublisher({
     confirm: true,
     maxAttempts: 2,
     exchanges: [{exchange}]
-  })
+  }))
   // establish the internal Channel and exchange (lazy setup)
   await pro.send({exchange}, 'test1')
   // deleting the exchange should cause the next publish to fail
-  await ch.exchangeDelete({exchange})
+  await rabbit.exchangeDelete({exchange})
 
   const [err] = await Promise.all([
     expectEvent(pro, 'retry'),
@@ -717,9 +656,6 @@ test('Publisher (maxAttempts) should retry failed publish', async () => {
   ])
   assert.equal(err.code, 'NOT_FOUND', 'got retry event')
   assert.ok(true, 'publish succeeded eventually')
-  await ch.close()
-  await pro.close()
-  await rabbit.close()
 })
 
 test('Connection should retry with next cluster node', async () => {
@@ -779,10 +715,10 @@ test('Connection should retry with next cluster node', async () => {
     s2complete = true
   })
 
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     retryLow: 25, // fast reconnect
     hosts: [`localhost:${port1}`, `localhost:${port2}`]
-  })
+  }))
 
   await expectEvent(rabbit, 'connection')
   assert.ok(true, 'established first connection')
@@ -799,8 +735,8 @@ test('Connection should retry with next cluster node', async () => {
 })
 
 test('should encode/decode array values in message headers', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
   const {queue} = await ch.queueDeclare({exclusive: true})
   assert.ok(queue, 'created temporary queue')
   await ch.basicPublish({routingKey: queue, headers: {'x-test-arr': ['red', 'blue']}}, '')
@@ -809,22 +745,19 @@ test('should encode/decode array values in message headers', async () => {
   assert.ok(msg, 'recieved message')
   const arr = msg?.headers?.['x-test-arr']
   assert.equal(arr.join(), 'red,blue', 'got the array')
-  await ch.close()
-  await rabbit.close()
 })
 
 test('handles (un)auth error', async () => {
   const wrongurl = new URL(RABBITMQ_URL || 'amqp://guest:guest@localhost:5672')
   wrongurl.password = 'badpassword'
-  const rabbit = new Connection(wrongurl.toString())
+  const rabbit = autoTeardown(new Connection(wrongurl.toString()))
   const err = await expectEvent(rabbit, 'error')
   assert.equal(err.code, 'ACCESS_REFUSED')
-  await rabbit.close()
 })
 
 test('out-of-order RPC', async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
-  const ch = await rabbit.acquire()
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
   const queues = ['1a9370fa04be7108', '5be264772fdd703b']
 
   await Promise.all([
@@ -834,12 +767,9 @@ test('out-of-order RPC', async () => {
   ])
 
   // rabbit will emit an UNEXPECTED_FRAME err if a response arrives out of order
-
-  await ch.close()
-  await rabbit.close()
 })
 
-test('lazy channel', async () => {
+test('lazy channel', {timeout: 250}, async () => {
   const rabbit = new Connection(RABBITMQ_URL)
 
   // 'can manage queues without explicitly creating a channel'
@@ -857,10 +787,10 @@ test('lazy channel', async () => {
 })
 
 test('client-side frame size checks', async () => {
-  const rabbit = new Connection({
+  const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
     frameMax: 4096,
-  })
+  }))
 
   const queue = '__test_797e71d3d9153ace'
 
@@ -875,19 +805,16 @@ test('client-side frame size checks', async () => {
   assert.match(res.reason.message, /^frame size of 4097/)
 
   // publish with oversized header should fail
-  const pub = rabbit.createPublisher({confirm: true})
+  const pub = autoTeardown(rabbit.createPublisher({confirm: true}))
   const [res2] = await Promise.allSettled([
     pub.send({routingKey: queue, headers: {bigstring: '0'.repeat(4038)}}, null)
   ])
   assert.equal(res2.status, 'rejected')
   assert.match(res2.reason.message, /^frame size of 4097/)
-
-  await pub.close()
-  await rabbit.close()
 })
 
 test('connection.onConnect: reject', async (t) => {
-  const rabbit = new Connection('amqp://wrong:password@127.0.0.1:5672')
+  const rabbit = autoTeardown(new Connection('amqp://wrong:password@127.0.0.1:5672'))
   await assert.rejects(rabbit.onConnect(10), (err: any) => {
     assert.match(err.message, /failed to connect in time/)
     // error.cause has recent connection error
@@ -900,11 +827,10 @@ test('connection.onConnect: reject', async (t) => {
 })
 
 test('connection.onConnect: resolve', async (t) => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
   await rabbit.onConnect(500)
   assert(rabbit.ready, 'connection ready')
   // should still resolve when already connected
   await rabbit.onConnect(500)
   assert(true, 'connection still ready')
-  await rabbit.close()
 })
