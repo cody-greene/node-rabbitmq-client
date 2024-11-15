@@ -786,6 +786,21 @@ test('lazy channel', {timeout: 250}, async () => {
   await rabbit.close()
 })
 
+test('lazy channel recovers from acquisition errors', async () => {
+  const rabbit = autoTeardown(new Connection({
+    url: RABBITMQ_URL,
+    maxChannels: 1
+  }))
+  const ch = autoTeardown(await rabbit.acquire())
+
+  await assert.rejects(rabbit.queueDeclare({queue: '__5a87c00901794671__', exclusive: true})
+    , /maximum number of AMQP Channels already opened/)
+
+  // Should succeed after closing the 1st channel
+  await ch.close()
+  await rabbit.queueDeclare({queue: '__5a87c00901794671__', exclusive: true})
+})
+
 test('client-side frame size checks', async () => {
   const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
