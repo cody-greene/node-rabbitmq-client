@@ -39,7 +39,7 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promi
 
 const CLIENT_PROPERTIES = {
   product: 'rabbitmq-client',
-  version: '5.0.0',
+  version: '5.0.1',
   platform: `node.js-${process.version}`,
   capabilities: {
     'basic.nack': true,
@@ -162,7 +162,7 @@ export class Connection extends EventEmitter {
     // shouldn't be noticable. And who needs that many Channels anyway!?
     const id = this._state.leased.pick()
     if (id > this._state.channelMax)
-      throw new Error('maximum number of AMQP Channels already open')
+      throw new Error(`maximum number of AMQP Channels already opened (${this._state.channelMax})`)
     const ch = new Channel(id, this)
     this._state.leased.set(id, ch)
     ch.once('close', () => {
@@ -588,8 +588,11 @@ export class Connection extends EventEmitter {
     if (ch instanceof Promise) {
       return ch
     }
-    if (ch == null || !ch.active) {
+    if (ch == null || !ch.active) try {
       return this._state.lazyChannel = await (this._state.lazyChannel = this.acquire())
+    } catch (err) {
+      this._state.lazyChannel = void 0
+      throw err
     }
     return ch
   }

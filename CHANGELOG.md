@@ -1,3 +1,7 @@
+## v5.0.1
+### Bug Fixes
+- 38c61f5 lazy channel should not get perma-stuck
+
 ## v5.0.0
 ### BREAKING CHANGES:
 #### 6766969 drop support for node 16
