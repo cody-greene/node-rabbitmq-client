@@ -637,6 +637,43 @@ test('Publisher should retry failed setup', async () => {
   assert.ok(true, 'setup completed and message published')
 })
 
+test('Connection#createPublisher() should complete setup before allowing (multiple) publishes', async () => {
+  const queue = '__test_99c78753f1a782ed'
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const pub = autoTeardown(rabbit.createPublisher({
+    confirm: true,
+    queues: [{queue, exclusive: true}]
+  }))
+
+  // observe rabbit.acquire()
+  const dfd = createDeferred<void>()
+  const ogacquire = rabbit.acquire
+  rabbit.acquire = function (...args) {
+    return ogacquire.apply(rabbit, args).then(res => {
+      process.nextTick(dfd.resolve)
+      return res
+    }, err => {
+      dfd.reject(err)
+      throw err
+    })
+  }
+
+  await Promise.all([
+    pub.send(queue, 'green'), // trigger setup
+    // publish again, after acquiring a channel, but before enabling confirms
+    // should also wait for setup to complete
+    dfd.promise.then(() => pub.send(queue, 'red')),
+  ])
+
+  const m1 = await rabbit.basicGet(queue)
+  const m2 = await rabbit.basicGet(queue)
+
+  // If red comes before green, then the publisher was allowed to send before
+  // setup completed
+  assert.equal(m1!.body, 'green')
+  assert.equal(m2!.body, 'red')
+})
+
 test('Publisher (maxAttempts) should retry failed publish', async () => {
   const exchange = '__test_ce7cea6070c084fe'
   const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
