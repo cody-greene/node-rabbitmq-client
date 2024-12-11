@@ -1,6 +1,6 @@
 ## v5.0.2
 ### Bug Fixes
-- fox channel setup race
+- fix channel setup race
 
 ## v5.0.1
 ### Bug Fixes
