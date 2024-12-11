@@ -263,7 +263,7 @@ export class Connection extends EventEmitter {
     const emitter = new EventEmitter()
 
     const setup = async () => {
-      const ch = _ch = await this.acquire()
+      const ch = await this.acquire()
       ch.on('basic.return', (msg) => emitter.emit('basic.return', msg))
       if (props.queues) for (const params of props.queues) {
         await ch.queueDeclare(params)
@@ -279,6 +279,7 @@ export class Connection extends EventEmitter {
       }
       if (props.confirm)
         await ch.confirmSelect()
+			_ch = ch
       return ch
     }
 

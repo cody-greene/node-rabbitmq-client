@@ -1,3 +1,7 @@
+## v5.0.2
+### Bug Fixes
+- fox channel setup race
+
 ## v5.0.1
 ### Bug Fixes
 - 38c61f5 lazy channel should not get perma-stuck
