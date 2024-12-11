@@ -279,7 +279,7 @@ export class Connection extends EventEmitter {
       }
       if (props.confirm)
         await ch.confirmSelect()
-			_ch = ch
+      _ch = ch
       return ch
     }
 
