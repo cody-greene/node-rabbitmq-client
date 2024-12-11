@@ -39,7 +39,7 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promi
 
 const CLIENT_PROPERTIES = {
   product: 'rabbitmq-client',
-  version: '5.0.1',
+  version: '5.0.2',
   platform: `node.js-${process.version}`,
   capabilities: {
     'basic.nack': true,
@@ -263,7 +263,7 @@ export class Connection extends EventEmitter {
     const emitter = new EventEmitter()
 
     const setup = async () => {
-      const ch = _ch = await this.acquire()
+      const ch = await this.acquire()
       ch.on('basic.return', (msg) => emitter.emit('basic.return', msg))
       if (props.queues) for (const params of props.queues) {
         await ch.queueDeclare(params)
@@ -279,6 +279,7 @@ export class Connection extends EventEmitter {
       }
       if (props.confirm)
         await ch.confirmSelect()
+      _ch = ch
       return ch
     }
 
