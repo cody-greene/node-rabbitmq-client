@@ -142,7 +142,7 @@ export class Connection extends EventEmitter {
    * Allocate and return a new AMQP Channel. You MUST close the channel
    * yourself. Will wait for connect/reconnect when necessary.
    */
-  async acquire(): Promise<Channel> {
+  async acquire(opt?: {emitErrorsFromChannel?: boolean}): Promise<Channel> {
     if (this._state.readyState >= READY_STATE.CLOSING)
       throw new AMQPConnectionError('CLOSING', 'channel creation failed; connection is closing')
     if (this._state.readyState === READY_STATE.CONNECTING) {
@@ -163,7 +163,7 @@ export class Connection extends EventEmitter {
     const id = this._state.leased.pick()
     if (id > this._state.channelMax)
       throw new Error(`maximum number of AMQP Channels already opened (${this._state.channelMax})`)
-    const ch = new Channel(id, this)
+    const ch = new Channel(id, this, opt?.emitErrorsFromChannel)
     this._state.leased.set(id, ch)
     ch.once('close', () => {
       this._state.leased.delete(id)

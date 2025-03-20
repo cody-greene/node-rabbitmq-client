@@ -46,6 +46,10 @@ export declare interface Channel {
   on(name: 'basic.return', cb: (msg: ReturnedMessage) => void): this;
   /** The channel was closed, because you closed it, or due to some error */
   on(name: 'close', cb: () => void): this;
+  /** Certain errors are emitted if the channel was acquired with
+   * emitErrorsFromChannel=true, otherwise these are emitted from the
+   * Connection object. */
+  on(name: 'error', cb: (err: any) => void): this;
 }
 
 /**
@@ -119,6 +123,9 @@ export class Channel extends EventEmitter {
     consumers: Map<string, (msg: AsyncMessage) => void>
     incoming?: AMQPMessage
     deliveryCount: number
+    /** If true, emit errors from itself rather than from the Connection. I
+     * should have done this from the beginning but now this is a back-compat flag. */
+    emitErrors: boolean
     /**
      * Ensures a channel can only publish one message at a time.
      * Multiple channels may interleave their DataFrames, but for any given channel
@@ -128,12 +135,13 @@ export class Channel extends EventEmitter {
   }
 
   /** @internal */
-  constructor(id: number, conn: Connection) {
+  constructor(id: number, conn: Connection, emitErrors = false) {
     super()
     this._conn = conn
     this.id = id
     this.active = true
     this._state = {
+      emitErrors: emitErrors,
       maxFrameSize: conn._opt.frameMax,
       deliveryCount: 1,
       mode: CH_MODE.NORMAL,
@@ -216,7 +224,11 @@ export class Channel extends EventEmitter {
         dfd.reject(err)
       } else {
         // last resort
-        this._conn.emit('error', err)
+        if (this._state.emitErrors) {
+          this.emit('error', err)
+        } else {
+          this._conn.emit('error', err)
+        }
       }
       this._clear()
       return
@@ -449,7 +461,11 @@ export class Channel extends EventEmitter {
     this._state.stream.write(genFrame(frame as MethodFrame, this._state.maxFrameSize), (err) => {
       if (err) {
         err.message += '; ' + Cmd[methodId]
-        this._conn.emit('error', err)
+        if (this._state.emitErrors) {
+          this.emit('error', err)
+        } else {
+          this._conn.emit('error', err)
+        }
       }
     })
   }
