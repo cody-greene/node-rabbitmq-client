@@ -6,11 +6,11 @@
 # git worktree add docs/ gh-pages
 #
 ## Release Steps
-# update package.json with version=$ver
-# npm publish --dry-run
-# git tag v$ver
-# ./make-docs.sh
-# git push origin master gh-pages v$ver
+# update CHANGELOG.md
+# git add CHANGELOG.md
+# ./release.sh <version>
+# ./make-docs.sh (optional)
+# git push origin master gh-pages <version>
 # npm publish
 #
 set -e

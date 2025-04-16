@@ -1,6 +1,22 @@
+## v5.0.4
+### Bug Fixes
+Some types of async errors can now be emitted from the Channel object,
+rather than the Connection object. When acquiring a basic Channel, you
+can enable this:
+```javascript
+const ch = connection.acquire({emitErrorsFromChannel: true})
+ch.on('error', (err) => ...)
+```
+
+This option is false by default, to maintain backwards compatibility.
+However this is used internally by the Consumer & RPCClient classes.
+Consumers will now emit these errors to help with debugging in some
+situations. Similiarly, RPCClient requests may also get a "cause"
+attached to some errors.
+
 ## v5.0.3
 ### Bug Fixes
-- cc03881 fix: 4.1 frame size updates (#75)
+RabbitMQ server v4.1 changed the minimum frameMax value, breaking clients which used the old default of 4096. The new default is 8192 (8 KiB). You can also use the `{frameMax: 8192}` connection option instead of upgrading this library. Thanks to @scottaj
 
 ## v5.0.2
 ### Bug Fixes
