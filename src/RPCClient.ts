@@ -119,12 +119,17 @@ export class RPCClient {
   private async _setup() {
     let {_ch: ch, _props: props} = this
     if (!ch || !ch.active) {
-      ch = this._ch = await this._conn.acquire()
+      ch = this._ch = await this._conn.acquire({emitErrorsFromChannel: true})
+      let caught: unknown
+      ch.once('error', (err) => {
+        caught = err
+      })
       ch.once('close', () => {
         // request-response MUST be on the same channel, so if the channel dies
         // so does all pending requests
+        const err = new AMQPChannelError('RPC_CLOSED', 'RPC channel closed unexpectedly', caught)
         for (const dfd of this._requests.values())
-          dfd.reject(new AMQPChannelError('RPC_CLOSED', 'RPC channel closed unexpectedly'))
+          dfd.reject(err)
         this._requests.clear()
       })
     }

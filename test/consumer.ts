@@ -136,7 +136,7 @@ test('Consumer waits for in-progress jobs to complete before reconnecting', asyn
 
   // intentionally cause a channel error so setup has to rerun
   await consumer._ch!.basicAck({deliveryTag: 404})
-  await expectEvent(rabbit, 'error')
+  await expectEvent(consumer, 'error')
   assert.ok(true, 'channel killed')
 
   await sleep(25)
@@ -190,7 +190,7 @@ test('Consumer should limit handler concurrency', async () => {
 
   // intentionally cause a channel error so setup has to rerun
   await consumer._ch!.basicAck({deliveryTag: 404})
-  await expectEvent(rabbit, 'error')
+  await expectEvent(consumer, 'error')
   assert.equal(consumer._prefetched.length, 0, 'buffered message was dropped')
 
   job2a.resolve()
@@ -243,7 +243,7 @@ test('Consumer concurrency with noAck=true', async () => {
 
   // intentionally cause a channel error
   await consumer._ch!.basicAck({deliveryTag: 404})
-  await expectEvent(rabbit, 'error')
+  await expectEvent(consumer, 'error')
   assert.equal(consumer._prefetched.length, 1, 'buffered message remains')
 
   // with noAck=true, close() should wait for remaining messages to process

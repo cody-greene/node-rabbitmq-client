@@ -2,8 +2,8 @@
 class AMQPError extends Error {
   code: string
   /** @internal */
-  constructor(code: string, message: string) {
-    super(message)
+  constructor(code: string, message: string, cause?: unknown) {
+    super(message, {cause})
     this.name = 'AMQPError'
     this.code = code
   }

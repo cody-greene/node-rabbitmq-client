@@ -273,7 +273,10 @@ export class Consumer extends EventEmitter {
 
     let {_ch: ch, _props: props} = this
     if (!ch || !ch.active) {
-      ch = this._ch = await this._conn.acquire()
+      ch = this._ch = await this._conn.acquire({emitErrorsFromChannel: true})
+      ch.on('error', (err) => {
+        this.emit('error', err)
+      })
       ch.once('close', () => {
         if (!this._props.noAck) {
           // clear any buffered messages since they can't be ACKd on a new channel
