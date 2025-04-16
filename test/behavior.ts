@@ -841,7 +841,7 @@ test('lazy channel recovers from acquisition errors', async () => {
 test('client-side frame size checks', async () => {
   const rabbit = autoTeardown(new Connection({
     url: RABBITMQ_URL,
-    frameMax: 4096,
+    frameMax: 8192,
   }))
 
   const queue = '__test_797e71d3d9153ace'
@@ -851,18 +851,18 @@ test('client-side frame size checks', async () => {
     queue: queue,
     routingKey: 'test',
     exchange: queue,
-    arguments: {bigstring: '0'.repeat(4018)}
+    arguments: {bigstring: '0'.repeat(8114)}
   })])
   assert.equal(res.status, 'rejected')
-  assert.match(res.reason.message, /^frame size of 4097/)
+  assert.match(res.reason.message, /^frame size of 8193/)
 
   // publish with oversized header should fail
   const pub = autoTeardown(rabbit.createPublisher({confirm: true}))
   const [res2] = await Promise.allSettled([
-    pub.send({routingKey: queue, headers: {bigstring: '0'.repeat(4038)}}, null)
+    pub.send({routingKey: queue, headers: {bigstring: '0'.repeat(8134)}}, null)
   ])
   assert.equal(res2.status, 'rejected')
-  assert.match(res2.reason.message, /^frame size of 4097/)
+  assert.match(res2.reason.message, /^frame size of 8193/)
 })
 
 test('connection.onConnect: reject', async (t) => {

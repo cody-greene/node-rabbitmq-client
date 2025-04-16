@@ -7,7 +7,7 @@ const TCP_PORT = '5672'
 const DEFAULT_OPTS = {
   acquireTimeout: 20000,
   connectionTimeout: 10000,
-  frameMax: 4096,
+  frameMax: 8192,
   heartbeat: 60,
   maxChannels: 0x07ff, // (16bit number so the protocol max is 0xffff)
   retryLow: 1000,
@@ -25,7 +25,7 @@ export interface ConnectionOptions {
   connectionTimeout?: number,
   /** Max size, in bytes, of AMQP data frames. Protocol max is
    * 2^32-1. Actual value is negotiated with the server.
-   * @default 4096 */
+   * @default 8192 */
   frameMax?: number,
   /** Period of time, in seconds, after which the TCP connection
    * should be considered unreachable. Server may have its own max value, in
