@@ -1,3 +1,7 @@
+## v5.0.3
+### Bug Fixes
+- cc03881 fix: 4.1 frame size updates (#75)
+
 ## v5.0.2
 ### Bug Fixes
 - fix channel setup race
