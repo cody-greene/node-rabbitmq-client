@@ -13,6 +13,10 @@ Why not amqplib?
 - Intuitive API with named parameters instead of positional
 - "x-arguments" like "x-message-ttl" don't have camelCase aliases
 
+## RabbitMQ Compatibility
+
+- To connect to RabbitMQ version 4.1.x or higher, you must use version 5.0.3 or higher of this library. See [#75](https://github.com/cody-greene/node-rabbitmq-client/pull/75) and the [CHANGELOG](https://github.com/cody-greene/node-rabbitmq-client/blob/master/CHANGELOG.md#v503) for details
+
 ## Performance
 Performance is comparable to amqplib (see ./benchmark.ts).
 
