@@ -485,12 +485,12 @@ export class Channel extends EventEmitter {
    * {@link Connection#on:BLOCKED | Connection#on('connection.blocked')}) then
    * the TCP socket buffer will eventually fill and this method will no longer
    * resolve immediately. */
-  async basicPublish(envelope: Envelope, body: MessageBody): Promise<void>
+  basicPublish(envelope: Envelope, body: MessageBody): Promise<void>
   /** Send directly to a queue. Same as `basicPublish({routingKey: queue}, body)` */
-  async basicPublish(queue: string, body: MessageBody): Promise<void>
+  basicPublish(queue: string, body: MessageBody): Promise<void>
   /** @ignore */
-  async basicPublish(envelope: string|Envelope, body: MessageBody): Promise<void>
-  async basicPublish(params: string|Envelope, body: MessageBody): Promise<void> {
+  basicPublish(envelope: string|Envelope, body: MessageBody): Promise<void>
+  basicPublish(params: string|Envelope, body: MessageBody): Promise<void> {
     if (!this.active) return Promise.reject(new AMQPChannelError('CH_CLOSE', 'channel is closed'))
     if (typeof params == 'string') {
       params = {routingKey: params}
@@ -507,15 +507,18 @@ export class Channel extends EventEmitter {
       params.contentType = 'application/json'
       params.contentEncoding = undefined
     }
-    await this._state.stream.writeAsync(genContentFrames(this.id, params, body, this._state.maxFrameSize))
+    const publish = this._state.stream.writeAsync(genContentFrames(this.id, params, body, this._state.maxFrameSize))
     if (this._state.mode === CH_MODE.CONFIRM) {
-      // wait for basic.ack or basic.nack
-      // note: Unroutable mandatory messages are acknowledged right
-      //       after the basic.return method. May be ack'd out-of-order.
-      const dfd = createDeferred()
-      this._state.unconfirmed.set(this._state.deliveryCount++, dfd)
-      return dfd.promise
+      return publish.then(() => {
+        // wait for basic.ack or basic.nack
+        // note: Unroutable mandatory messages are acknowledged right
+        //       after the basic.return method. May be ack'd out-of-order.
+        const dfd = createDeferred()
+        this._state.unconfirmed.set(this._state.deliveryCount++, dfd)
+        return dfd.promise
+      })
     }
+    return publish
   }
 
   /**
