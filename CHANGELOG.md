@@ -1,3 +1,7 @@
+## v5.0.5
+### Performance
+Thanks to Ievgen Makukh (@Samuron), unconfirmed publishers should be a little bit faster.
+
 ## v5.0.4
 ### Bug Fixes
 Some types of async errors can now be emitted from the Channel object,
