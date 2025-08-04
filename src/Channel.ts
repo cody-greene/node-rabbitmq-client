@@ -140,6 +140,7 @@ export class Channel extends EventEmitter {
     this._conn = conn
     this.id = id
     this.active = true
+    this._invokeHandler = this._invokeHandler.bind(this)
     this._state = {
       emitErrors: emitErrors,
       maxFrameSize: conn._opt.frameMax,
@@ -379,20 +380,10 @@ export class Channel extends EventEmitter {
       }
 
       if (methodFrame.methodId === Cmd.BasicDeliver) {
-        const message: AsyncMessage = uncastMessage as any
         // setImmediate allows basicConsume to resolve first if
         // basic.consume-ok & basic.deliver are received in the same chunk.
         // Also this resets the stack trace for handler()
-        setImmediate(() => {
-          const handler = this._state.consumers.get(message.consumerTag)
-          if (!handler) {
-            // this is a bug; missing handler for consumerTag
-            // TODO should never happen but maybe close the channel here
-          } else {
-            // no try-catch; users must handle their own errors
-            handler(message)
-          }
-        })
+        setImmediate(this._invokeHandler, uncastMessage as AsyncMessage)
       } else if (methodFrame.methodId === Cmd.BasicReturn) {
         setImmediate(() => {
           this.emit('basic.return', uncastMessage) // ReturnedMessage
@@ -400,6 +391,19 @@ export class Channel extends EventEmitter {
       } else if (methodFrame.methodId === Cmd.BasicGetOK) {
         this._handleRPC(Cmd.BasicGetOK, uncastMessage) // SyncMessage
       }
+    }
+  }
+
+  /** @internal */
+  _invokeHandler(msg: AsyncMessage): void {
+    const handler = this._state.consumers.get(msg.consumerTag)
+    if (!handler) {
+      // this is a bug; missing handler for consumerTag
+      // TODO should never happen but maybe close the channel here
+    } else {
+      // no try-catch; users must handle their own errors
+
+      handler(msg)
     }
   }
 
