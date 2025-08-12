@@ -379,20 +379,19 @@ export class Channel extends EventEmitter {
       }
 
       if (methodFrame.methodId === Cmd.BasicDeliver) {
-        const message: AsyncMessage = uncastMessage as any
-        // setImmediate allows basicConsume to resolve first if
-        // basic.consume-ok & basic.deliver are received in the same chunk.
-        // Also this resets the stack trace for handler()
-        setImmediate(() => {
-          const handler = this._state.consumers.get(message.consumerTag)
-          if (!handler) {
-            // this is a bug; missing handler for consumerTag
-            // TODO should never happen but maybe close the channel here
-          } else {
-            // no try-catch; users must handle their own errors
-            handler(message)
-          }
-        })
+        const msg = uncastMessage as AsyncMessage
+        const handler = this._state.consumers.get(msg.consumerTag)
+        if (!handler) {
+          // this is a bug; missing handler for consumerTag
+          // TODO should never happen but maybe close the channel here
+        } else {
+          // setImmediate allows basicConsume to resolve first if
+          // basic.consume-ok & basic.deliver are received in the same chunk.
+          // Also this resets the stack trace for handler()
+          // no try-catch; users must handle their own errors
+          setImmediate(handler, msg)
+        }
+
       } else if (methodFrame.methodId === Cmd.BasicReturn) {
         setImmediate(() => {
           this.emit('basic.return', uncastMessage) // ReturnedMessage
