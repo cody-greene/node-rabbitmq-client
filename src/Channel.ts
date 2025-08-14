@@ -287,11 +287,12 @@ export class Channel extends EventEmitter {
       throw new AMQPConnectionError('UNEXPECTED_FRAME',
         'unexpected method frame, already awaiting header/body; this is a bug')
     }
-    if ([Cmd.BasicDeliver, Cmd.BasicReturn, Cmd.BasicGetOK].includes(methodFrame.methodId)) {
+    const methodId = methodFrame.methodId
+    if (methodId === Cmd.BasicDeliver || methodId === Cmd.BasicReturn || methodId === Cmd.BasicGetOK) {
       this._state.incoming = {methodFrame, headerFrame: undefined, chunks: undefined, received: 0}
-    } else if (methodFrame.methodId === Cmd.BasicGetEmpty) {
+    } else if (methodId === Cmd.BasicGetEmpty) {
       this._handleRPC(Cmd.BasicGetOK, undefined)
-    } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.methodId === Cmd.BasicAck) {
+    } else if (this._state.mode === CH_MODE.CONFIRM && methodId === Cmd.BasicAck) {
       const params = methodFrame.params as Required<MethodParams[Cmd.BasicAck]>
       if (params.multiple) {
         for (const [tag, dfd] of this._state.unconfirmed.entries()) {
@@ -309,7 +310,7 @@ export class Channel extends EventEmitter {
           //TODO channel error; PRECONDITION_FAILED, unexpected ack
         }
       }
-    } else if (this._state.mode === CH_MODE.CONFIRM && methodFrame.methodId === Cmd.BasicNack) {
+    } else if (this._state.mode === CH_MODE.CONFIRM && methodId === Cmd.BasicNack) {
       const params = methodFrame.params as Required<MethodParams[Cmd.BasicNack]>
       if (params.multiple) {
         for (const [tag, dfd] of this._state.unconfirmed.entries()) {
@@ -327,7 +328,7 @@ export class Channel extends EventEmitter {
           //TODO channel error; PRECONDITION_FAILED, unexpected nack
         }
       }
-    } else if (methodFrame.methodId === Cmd.BasicCancel) {
+    } else if (methodId === Cmd.BasicCancel) {
       const params = methodFrame.params as Required<MethodParams[Cmd.BasicCancel]>
       this._state.consumers.delete(params.consumerTag)
       setImmediate(() => {
@@ -335,7 +336,7 @@ export class Channel extends EventEmitter {
       })
     //} else if (methodFrame.fullName === 'channel.flow') unsupported; https://blog.rabbitmq.com/posts/2014/04/breaking-things-with-rabbitmq-3-3
     } else {
-      this._handleRPC(methodFrame.methodId, methodFrame.params)
+      this._handleRPC(methodId, methodFrame.params)
     }
   }
 
