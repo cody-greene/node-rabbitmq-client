@@ -1,3 +1,8 @@
+## v5.0.6
+### Performance
+- perf: avoid array allocation in _onMethod (#82)
+- perf: avoid closure in BasicDeliver (#81)
+
 ## v5.0.5
 ### Performance
 Thanks to Ievgen Makukh (@Samuron), unconfirmed publishers should be a little bit faster.

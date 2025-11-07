@@ -1,6 +1,6 @@
 {
   "name": "rabbitmq-client",
-  "version": "5.0.5",
+  "version": "5.0.6",
   "description": "Robust, typed, RabbitMQ (0-9-1) client library",
   "engines": {
     "node": ">=16"
