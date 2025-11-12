@@ -250,7 +250,7 @@ const TYPE = {
       return out.writeUInt8(val == null ? 0 : val, offset)
     }
   },
-  UINT16: {id: 66,
+  UINT16: {id: 117,
     sizeof(){ return 2 },
     decode(src: Buffer, offset: number): Decoded<number> {
       return [src.readUInt16BE(offset), offset + 2]
