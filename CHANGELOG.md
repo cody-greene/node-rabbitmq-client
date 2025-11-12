@@ -1,3 +1,7 @@
+## v5.0.7
+### Bug Fixes
+- wrong identifier for unsigned short/uint16 in binary codec (#84) <Riccardo Sabbatini>
+
 ## v5.0.6
 ### Performance
 - perf: avoid array allocation in _onMethod (#82)
