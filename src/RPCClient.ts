@@ -173,12 +173,12 @@ export class RPCClient {
    * - {@link Envelope.correlationId}
    * - {@link Envelope.expiration}
    */
-  send(envelope: Envelope, body: any): Promise<AsyncMessage>
+  send(envelope: Omit<Envelope, 'replyTo' | 'correlationId' | 'expiration'>, body: any): Promise<AsyncMessage>
   /** Send directly to a queue. Same as `send({routingKey: queue}, body)` */
   send(queue: string, body: any): Promise<AsyncMessage>
   /** @ignore */
-  send(envelope: string|Envelope, body: any): Promise<AsyncMessage>
-  async send(envelope: string|Envelope, body: any): Promise<AsyncMessage> {
+  send(envelope: string|Omit<Envelope, 'replyTo' | 'correlationId' | 'expiration'>, body: any): Promise<AsyncMessage>
+  async send(envelope: string|Omit<Envelope, 'replyTo' | 'correlationId' | 'expiration'>, body: any): Promise<AsyncMessage> {
     const maxAttempts = this._props.maxAttempts || 1
     let attempts = 0
     while (true) try {
