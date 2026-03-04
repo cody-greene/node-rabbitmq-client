@@ -4,14 +4,15 @@
 Node.js client library for [RabbitMQ](https://www.rabbitmq.com/documentation.html). Publish
 messages, declare rules for routing those messages into queues, consume messages from queues.
 
-Why not amqplib?
+[See here for full API documentation](http://cody-greene.github.io/node-rabbitmq-client)
+
+How is this different from amqplib?
+- Written from scratch as an alternative implementation. This is not a wrapper library.
 - No dependencies
 - Automatically re-connect, re-subscribe, or retry publishing
-- Optional higher-level Consumer/Publisher API for even more robustness
+- Optional higher-level ergonomic Consumer/Publisher API for even more robustness
 - Written in typescript and published with heavily commented type definitions
-- [See here for full API documentation](http://cody-greene.github.io/node-rabbitmq-client)
 - Intuitive API with named parameters instead of positional
-- "x-arguments" like "x-message-ttl" don't have camelCase aliases
 
 ## RabbitMQ Compatibility
 
