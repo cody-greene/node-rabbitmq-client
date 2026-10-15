@@ -1372,16 +1372,19 @@ export interface Envelope extends HeaderFields, BasicPublishParams {}
 type BasicDeliverParams = MethodParams[Cmd.BasicDeliver]
 /** May be received after creating a consumer with {@link Channel.basicConsume} */
 export interface AsyncMessage extends HeaderFields, BasicDeliverParams {
+  rawBody: Buffer
   body: MessageBody
 }
 type BasicGetOKParams = MethodParams[Cmd.BasicGetOK]
 /** May be recieved in response to {@link Channel.basicGet} */
 export interface SyncMessage extends HeaderFields, BasicGetOKParams {
+  rawBody: Buffer
   body: MessageBody
 }
 type BasicReturnParams = MethodParams[Cmd.BasicReturn]
 /** May be received after {@link Channel.basicPublish} mandatory=true or immediate=true */
 export interface ReturnedMessage extends HeaderFields, BasicReturnParams {
+  rawBody: Buffer
   body: MessageBody
 }
 

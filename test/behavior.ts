@@ -886,3 +886,19 @@ test('connection.onConnect: resolve', async (t) => {
   await rabbit.onConnect(500)
   assert(true, 'connection still ready')
 })
+
+test('msg.rawBody', async () => {
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const ch = autoTeardown(await rabbit.acquire())
+
+  const body = {color: 'green'}
+  const buf = Buffer.from(JSON.stringify(body))
+  const {queue} = await ch.queueDeclare({exclusive: true})
+
+  await ch.basicPublish({routingKey: queue, contentType: 'application/json'}, buf)
+  const msg = await ch.basicGet({queue, noAck: true})
+  assert.deepEqual(msg?.body, body,
+    'body is a POJO as usual')
+  assert(buf.equals(msg.rawBody),
+    'rawBody should match the sent message byte-for-byte')
+})

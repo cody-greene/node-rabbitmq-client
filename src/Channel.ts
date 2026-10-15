@@ -361,7 +361,9 @@ export class Channel extends EventEmitter {
       const {methodFrame, headerFrame, chunks} = this._state.incoming
       this._state.incoming = undefined
 
-      let body: MessageBody = Buffer.concat(chunks)
+      const rawBody = Buffer.concat(chunks)
+      let body: MessageBody = rawBody
+
       if (headerFrame.fields.contentType === 'text/plain' && !headerFrame.fields.contentEncoding) {
         body = body.toString()
       } else if (headerFrame.fields.contentType === 'application/json' && !headerFrame.fields.contentEncoding) {
@@ -376,6 +378,7 @@ export class Channel extends EventEmitter {
         ...methodFrame.params,
         ...headerFrame.fields,
         durable: headerFrame.fields.deliveryMode === 2,
+        rawBody,
         body
       }
 
