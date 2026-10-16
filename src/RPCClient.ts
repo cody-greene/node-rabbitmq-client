@@ -184,7 +184,7 @@ export class RPCClient {
     while (true) try {
       if (!this.active)
         throw new AMQPChannelError('RPC_CLOSED', 'RPC client is closed')
-      if (!this._ch?.active) {
+      if (this._pendingSetup || !this._ch?.active) {
         if (!this._pendingSetup)
           this._pendingSetup = this._setup().finally(() =>{ this._pendingSetup = undefined })
         await this._pendingSetup
