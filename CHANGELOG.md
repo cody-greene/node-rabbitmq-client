@@ -1,3 +1,13 @@
+## v5.1.0
+### Features
+- Access the unmodified content of a message, as a Buffer object, with
+  `msg.rawBody`. Note that if `msg.contentType` is not "text/plain" or
+  "application/json" then `msg.body` points to the same Buffer object.
+
+### Bug Fixes
+- RPCClient actually waits for setup to complete before sending concurrent
+  requests. Avoiding "PRECONDITION_FAILED - fast reply consumer does not exist" errors.
+
 ## v5.0.7
 ### Bug Fixes
 - wrong identifier for unsigned short/uint16 in binary codec (#84) <Riccardo Sabbatini>
