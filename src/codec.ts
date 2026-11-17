@@ -693,7 +693,7 @@ const CONTENT_PROPS: ReadonlyArray<[key: keyof HeaderFields, type: CodecType, ma
 ]
 
 /** @internal */
-export async function decodeFrame(read: (bytes: number) => Promise<Buffer>): Promise<DataFrame> {
+export async function decodeFrame(read: (bytes: number) => Buffer | Promise<Buffer>): Promise<DataFrame> {
   const chunk = await read(7)
   const frameTypeId = chunk.readUint8(0)
   const channelId = chunk.readUint16BE(1)
@@ -855,30 +855,32 @@ interface IdentifiedCodecType extends CodecType {
   id: number
 }
 
+const MAX_INT8 = 0x80
+const MAX_INT16 = 0x8000
+const MAX_INT32 = 0x8000_0000
+
 function getBestType(val: unknown): IdentifiedCodecType|undefined {
   if (typeof val === 'string') {
     return TYPE.STRING
   } else if (typeof val === 'boolean') {
     return TYPE.BOOL
   } else if (typeof val === 'number') {
-    // 0x4000000000000 (2^50):
-    //   insufficient precision to distinguish floats or ints
-    //   e.g. Math.pow(2, 50) + 0.1 === Math.pow(2, 50)
-    //   so use INT64 instead
-    if (val >= 0x8000000000000000
-      || val > -0x4000000000000 && val < 0x4000000000000 && Math.floor(val) !== val) {
-      return TYPE.DOUBLE
-    } else if (val >= -0x80 && val < 0x80) {
-      return TYPE.INT8
-    } else if (val >= -0x8000 && val < 0x8000) {
-      return TYPE.INT16
-    } else if (val >= -0x80000000 && val < 0x80000000) {
-      return TYPE.INT32
-    } else {
-      return TYPE.INT64
+    if (Number.isInteger(val)) {
+      // Use a smaller container if we can
+      if (val < MAX_INT8 && val >= -MAX_INT8) {
+        return TYPE.INT8
+      } else if (val < MAX_INT16 && val >= -MAX_INT16) {
+        return TYPE.INT16
+      } else if (val < MAX_INT32 && val >= -MAX_INT32) {
+        return TYPE.INT32
+      }
+    } else if (!Number.isFinite(val)) {
+      // Save 4 bytes by using FLOAT for IEEE-754 special values like Infinity & NaN
+      return TYPE.FLOAT
     }
+    return TYPE.DOUBLE
   } else if (typeof val == 'bigint') {
-    return TYPE.INT64
+    return val < 0 ? TYPE.INT64 : TYPE.UINT64
   } else if (Array.isArray(val)) {
     return TYPE.ARRAY
   } else if (val === null) {
