@@ -39,7 +39,7 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promi
 
 const CLIENT_PROPERTIES = {
   product: 'rabbitmq-client',
-  version: '5.1.0',
+  version: '5.1.1',
   platform: `node.js-${process.version}`,
   capabilities: {
     'basic.nack': true,

@@ -1,3 +1,9 @@
+## v5.1.1
+## Bug Fixes
+- codec: Floating point values for fields in the `headers` or `arguments` tables and beyond 2^50 are encoded as a DOUBLE instead of INT64
+- codec: BigInts for arbitrary fields in the `headers` or `arguments` tables are encoded as UINT64 instead of INT64 when possible (non-negative).
+- codec: Special IEEE754 values (-Infinity, NaN) are encoded as 32bit floats (saving 4 bytes)
+
 ## v5.1.0
 ### Features
 - Access the unmodified content of a message, as a Buffer object, with
