@@ -62,6 +62,9 @@ export enum ConsumerStatus {
   /** BasicNack(requeue=false). The message is sent to the
    * configured dead-letter exchange, if any, or discarded. */
   DROP = 2,
+  /** BasicReject(requeue=true). The message is returned to the queue.
+   * Quorum queues increment `x-delivery-count`, so `x-delivery-limit` applies. */
+  REJECT = 3,
 }
 
 export declare interface Consumer {
@@ -93,6 +96,7 @@ export declare interface Consumer {
  * - returns 0 or undefined - BasicAck
  * - returns 1 - BasicNack(requeue=true)
  * - returns 2 - BasicNack(requeue=false)
+ * - returns 3 - BasicReject(requeue=true)
  *
  * About concurency: For best performance, you'll likely want to start with
  * concurrency=X and qos.prefetchCount=2X. In other words, up to 2X messages
@@ -236,6 +240,9 @@ export class Consumer extends EventEmitter {
           ++this.stats.dropped
         } else if (retval === ConsumerStatus.REQUEUE) {
           ch.basicNack({deliveryTag: msg.deliveryTag, requeue: true})
+          ++this.stats.requeued
+        } else if (retval === ConsumerStatus.REJECT) {
+          ch.basicReject({deliveryTag: msg.deliveryTag, requeue: true})
           ++this.stats.requeued
         } else {
           ch.basicAck({deliveryTag: msg.deliveryTag})

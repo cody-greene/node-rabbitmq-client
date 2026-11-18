@@ -609,6 +609,14 @@ export class Channel extends EventEmitter {
   basicNack(params: MethodParams[Cmd.BasicNack]): void {
     this._invokeNowait(Cmd.BasicNack, {...params, requeue: typeof params.requeue == 'undefined' ? true : params.requeue})
   }
+  /**
+   * Reject one incoming message. Unlike {@link Channel#basicNack}, RabbitMQ
+   * quorum queues increment the `x-delivery-count` header on BasicReject with
+   * requeue=true, so the `x-delivery-limit` queue argument applies.
+   */
+  basicReject(params: MethodParams[Cmd.BasicReject]): void {
+    this._invokeNowait(Cmd.BasicReject, {...params, requeue: typeof params.requeue == 'undefined' ? true : params.requeue})
+  }
   /** Specify quality of service. */
   async basicQos(params: MethodParams[Cmd.BasicQos]): Promise<void> {
     await this._invoke(Cmd.BasicQos, Cmd.BasicQosOK, params)

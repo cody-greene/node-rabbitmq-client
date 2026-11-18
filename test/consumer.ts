@@ -332,7 +332,10 @@ test('Consumer stats', async () => {
   msg2.resolve(ConsumerStatus.REQUEUE)
 
   const msg3 = await sub.read()
-  msg3.resolve(ConsumerStatus.DROP)
+  msg3.resolve(ConsumerStatus.REJECT)
+
+  const msg4 = await sub.read()
+  msg4.resolve(ConsumerStatus.DROP)
 
   await Promise.all([
     pub.close(),
@@ -341,8 +344,57 @@ test('Consumer stats', async () => {
   ])
 
   assert.equal(sub.stats.acknowledged, 1)
-  assert.equal(sub.stats.requeued, 1)
+  assert.equal(sub.stats.requeued, 2)
   assert.equal(sub.stats.dropped, 1)
+})
+
+test('ConsumerStatus.REJECT increments x-delivery-count on a quorum queue', async () => {
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const queue = '__test_5f0c2a9e7d4b8136__'
+  const exchange = '__test_9a1e6c3b2f7d4058__'
+  const deadqueue = '__test_c47d1e08b3a5f962__'
+
+  const ch = autoTeardown(await rabbit.acquire())
+  await ch.queueDelete(queue)
+
+  const sub = autoTeardown(createIterableConsumer(rabbit, {
+    queue,
+    queueOptions: {
+      durable: true,
+      arguments: {
+        'x-queue-type': 'quorum',
+        'x-delivery-limit': 1,
+        'x-dead-letter-exchange': exchange,
+      }
+    },
+  }))
+  const dead = autoTeardown(createIterableConsumer(rabbit, {
+    queue: deadqueue,
+    queueOptions: {exclusive: true},
+    queueBindings: [{exchange, routingKey: queue}],
+    exchanges: [{exchange, type: 'fanout', autoDelete: true}]
+  }))
+
+  await expectEvent(sub, 'ready')
+  await expectEvent(dead, 'ready')
+
+  await ch.basicPublish(queue, 'green')
+  const msg1 = await sub.read()
+  assert.equal(msg1.headers?.['x-delivery-count'], undefined)
+  msg1.resolve(ConsumerStatus.REJECT)
+
+  const msg2 = await sub.read()
+  assert.equal(msg2.redelivered, true, 'msg redelivered')
+  assert.equal(msg2.headers?.['x-delivery-count'], 1)
+  msg2.resolve(ConsumerStatus.REJECT)
+
+  // delivery limit exceeded, the broker dead-letters the message
+  const msg3 = await dead.read()
+  assert.equal(msg3.body, 'green', 'got dead-letter')
+  msg3.resolve()
+
+  await sub.close()
+  await ch.queueDelete(queue)
 })
 
 test('Lazy consumer', async () => {
