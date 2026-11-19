@@ -605,7 +605,15 @@ export class Channel extends EventEmitter {
     }
     return this._invoke(Cmd.BasicGet, Cmd.BasicGetOK, {...params, rsvp1: 0})
   }
-  /** Reject one or more incoming messages. */
+  /** Reject a message and optionally requeue it. If not requeued then it may
+   * be delivered to a dead-letter queue, if one is configured. Increments the
+   * delivery-count header for quorum queues. */
+  basicReject(params: MethodParams[Cmd.BasicReject]): void {
+    this._invokeNowait(Cmd.BasicReject, {...params, requeue: typeof params.requeue == 'undefined' ? true : params.requeue})
+  }
+  /** Reject one or more incoming messages. Does NOT increment the
+   * delivery-count header. When multiple=true all unacknowledged messages on
+   * the channel, up to and including the deliveryTag, are rejected. */
   basicNack(params: MethodParams[Cmd.BasicNack]): void {
     this._invokeNowait(Cmd.BasicNack, {...params, requeue: typeof params.requeue == 'undefined' ? true : params.requeue})
   }

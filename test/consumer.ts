@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, {after} from 'node:test'
 import assert from 'node:assert/strict'
 import Connection, {AsyncMessage, ConsumerStatus} from '../src'
 import {PREFETCH_EVENT} from '../src/Consumer'
@@ -8,6 +8,14 @@ import {sleep, createIterableConsumer, autoTeardown} from './util'
 type TMParams = [Deferred<void>, AsyncMessage]
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL
+
+interface Resolvable {
+  resolve(): void
+}
+function autoResolve<T extends Resolvable>(obj: T) :T {
+  after(() => { obj.resolve() })
+  return obj
+}
 
 test('Consumer#close() waits for setup to complete', async () => {
   const rabbit = autoTeardown(new Connection({url: RABBITMQ_URL, retryLow: 25}))
@@ -373,4 +381,47 @@ test('Lazy consumer', async () => {
   ])
 
   assert.equal(sub._readyState, READY_STATE.CLOSED)
+})
+
+test('delivery-count header', async () => {
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
+  const queue = '__test__ab841cc1f47c5f75'
+  await rabbit.queueDelete(queue) // reset from previous failed run, if necessary
+  const sub = autoTeardown(createIterableConsumer(rabbit, {
+    queue,
+    queueOptions: {
+      durable: true,
+      arguments: {'x-queue-type': 'quorum'}
+    }
+  }))
+
+  sub.on('error', (err) => {
+    assert.equal(err.message, 'bad news')
+  })
+
+  await expectEvent(sub, 'ready')
+
+  const pub = autoTeardown(rabbit.createPublisher())
+
+  await pub.send(sub.queue, 'test')
+
+  const m1 = autoResolve(await sub.read())
+  assert.equal(m1.headers?.['x-delivery-count'], undefined)
+  m1.reject(new Error('bad news'))
+
+  const m2 = autoResolve(await sub.read())
+  // Should use BasicReject by default, which increments the delivery-count header
+  assert.equal(m2.headers?.['x-delivery-count'], 1)
+  m2.resolve(ConsumerStatus.REQUEUE)
+
+  const m3 = autoResolve(await sub.read())
+  assert.equal(m3.headers?.['x-delivery-count'], 2)
+  m3.resolve(ConsumerStatus.NACK)
+
+  const m4 = autoResolve(await sub.read())
+  assert.equal(m4.headers?.['x-delivery-count'], 2) // not incremented
+  m4.resolve()
+
+  await sub.close()
+  await rabbit.queueDelete(queue)
 })

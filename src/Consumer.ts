@@ -18,7 +18,7 @@ export interface ConsumerProps extends BasicConsumeParams {
    * @default Infinity */
   concurrency?: number,
   /** Requeue message when the handler throws an Error
-   * (as with {@link Channel.basicNack})
+   * (as with {@link Channel.basicReject})
    * @default true */
   requeue?: boolean,
   /** Additional options when declaring the queue just before creating the
@@ -57,11 +57,13 @@ export interface ConsumerHandler {
 export enum ConsumerStatus {
   /** BasicAck */
   ACK = 0,
-  /** BasicNack(requeue=true). The message is returned to the queue. */
+  /** BasicReject(requeue=true). The message is returned to the queue. Increments the delivery-count header. */
   REQUEUE = 1,
-  /** BasicNack(requeue=false). The message is sent to the
+  /** BasicReject(requeue=false). The message is sent to the
    * configured dead-letter exchange, if any, or discarded. */
   DROP = 2,
+  /** BasicNack(requeue=true). The message is returned to the queue. Does NOT increment the delivery-count header. */
+  NACK = 3,
 }
 
 export declare interface Consumer {
@@ -83,16 +85,17 @@ export declare interface Consumer {
  * Channel. This uses the same retry-delay logic as the Connection.
  *
  * The callback is called for each incoming message. If it throws an error then
- * the message is rejected (BasicNack) and possibly requeued, or sent to a
+ * the message is rejected (BasicReject) and possibly requeued, or sent to a
  * dead-letter exchange. The error is then emitted as an event. The callback
  * can also return a numeric status code to control the ACK/NACK behavior. The
  * {@link ConsumerStatus} enum is provided for convenience.
  *
  * ACK/NACK behavior when the callback:
- * - throws an error - BasicNack(requeue=ConsumerProps.requeue)
+ * - throws an error - BasicReject(requeue=ConsumerProps.requeue)
  * - returns 0 or undefined - BasicAck
- * - returns 1 - BasicNack(requeue=true)
- * - returns 2 - BasicNack(requeue=false)
+ * - returns 1 - BasicReject(requeue=true)
+ * - returns 2 - BasicReject(requeue=false)
+ * - returns 3 - BasicNack(requeue=true) Does NOT increment the delivery-count header
  *
  * About concurency: For best performance, you'll likely want to start with
  * concurrency=X and qos.prefetchCount=2X. In other words, up to 2X messages
@@ -147,13 +150,13 @@ export class Consumer extends EventEmitter {
   readonly stats = {
     /** Total acknowledged messages */
     acknowledged: 0,
-    /** Total messages rejected BasicNack(requeue=false) */
+    /** Total messages rejected BasicReject(requeue=false) */
     dropped: 0,
     /** Size of the queue when this consumer started */
     initialMessageCount: 0,
     /** How many messages are in memory, waiting to be processed */
     prefetched: 0,
-    /** Total messages rejected with BasicNack(requeue=true) */
+    /** Total messages rejected with BasicReject(requeue=true) or BasicNack(requeue=true) */
     requeued: 0,
   }
 
@@ -224,7 +227,7 @@ export class Consumer extends EventEmitter {
         retval = await this._handler(msg, this._makeReplyfn(msg))
       } catch (err) {
         if (!this._props.noAck) {
-          ch.basicNack({deliveryTag: msg.deliveryTag, requeue: this._props.requeue})
+          ch.basicReject({deliveryTag: msg.deliveryTag, requeue: this._props.requeue})
           if (this._props.requeue) { ++this.stats.requeued } else { ++this.stats.dropped }
         }
         this.emit('error', err)
@@ -232,9 +235,12 @@ export class Consumer extends EventEmitter {
       }
       if (!this._props.noAck) {
         if (retval === ConsumerStatus.DROP) {
-          ch.basicNack({deliveryTag: msg.deliveryTag, requeue: false})
+          ch.basicReject({deliveryTag: msg.deliveryTag, requeue: false})
           ++this.stats.dropped
         } else if (retval === ConsumerStatus.REQUEUE) {
+          ch.basicReject({deliveryTag: msg.deliveryTag, requeue: true})
+          ++this.stats.requeued
+        } else if (retval === ConsumerStatus.NACK) {
           ch.basicNack({deliveryTag: msg.deliveryTag, requeue: true})
           ++this.stats.requeued
         } else {

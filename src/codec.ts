@@ -998,6 +998,11 @@ export interface MethodParams {
      * discard a message after too many attempted deliveries. For classic
      * mirrored queues, or non-mirrored queues, you will need to construct your
      * own mechanism for discarding poison messages.
+     *
+     * BasicNack signals that the consumer did not process the message, but
+     * does not count this as failure. Using this method does not increment the
+     * delivery-count header.
+     *
      * @default true */
     requeue?: boolean
   },
@@ -1057,7 +1062,26 @@ export interface MethodParams {
     requeue?: boolean
   },
   [Cmd.BasicRecoverOK]: void,
-  [Cmd.BasicReject]: {deliveryTag: number, requeue?: boolean},
+  [Cmd.BasicReject]: {
+    /** Identifier for the rejected message */
+    deliveryTag: number,
+    /** If requeue is true, the server will attempt to requeue
+     * the message. If requeue is false or the requeue attempt fails the
+     * messages are discarded or dead-lettered. The default should be TRUE,
+     * according to the AMQP specification, however this can lead to an endless
+     * retry-loop if you're not careful. Messages consumed from a {@link
+     * https://www.rabbitmq.com/quorum-queues.html#poison-message-handling |
+     * quorum queue} will have the "x-delivery-count" header, allowing you to
+     * discard a message after too many attempted deliveries. For classic
+     * mirrored queues, or non-mirrored queues, you will need to construct your
+     * own mechanism for discarding poison messages.
+     *
+     * BasicReject signals that message processing failed. Using this method
+     * increments the message's delivery-count header.
+     *
+     * @default true */
+    requeue?: boolean
+  },
   [Cmd.BasicReturn]: {replyCode: number, replyText: string, exchange: string, routingKey: string},
 
   /** @internal */
