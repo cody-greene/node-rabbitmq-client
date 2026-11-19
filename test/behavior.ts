@@ -807,7 +807,7 @@ test('out-of-order RPC', async () => {
 })
 
 test('lazy channel', {timeout: 250}, async () => {
-  const rabbit = new Connection(RABBITMQ_URL)
+  const rabbit = autoTeardown(new Connection(RABBITMQ_URL))
 
   // 'can manage queues without explicitly creating a channel'
   const {queue} = await rabbit.queueDeclare({exclusive: true})
@@ -819,8 +819,23 @@ test('lazy channel', {timeout: 250}, async () => {
   assert.equal(res.status === 'rejected' && res.reason.code, 'NOT_FOUND')
   await rabbit.queueDeclare({queue, passive: true})
 
+  const pub = autoTeardown(rabbit.createPublisher({confirm: true}))
+  await pub.send(queue, 'test')
+
+  // get/ack/nack
+  const m1 = await rabbit.basicGet(queue)
+  assert(m1)
+  await rabbit.basicNack(m1)
+
+  const m2 = await rabbit.basicGet(queue)
+  assert(m2)
+  await rabbit.basicReject(m2)
+
+  const m3 = await rabbit.basicGet(queue)
+  assert(m3)
+  await rabbit.basicAck(m3)
+
   // 'lazy channel auto-closes'
-  await rabbit.close()
 })
 
 test('lazy channel recovers from acquisition errors', async () => {

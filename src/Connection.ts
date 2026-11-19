@@ -607,6 +607,21 @@ export class Connection extends EventEmitter {
     return this._lazy().then(ch => ch.basicGet(params))
   }
 
+  /** {@inheritDoc Channel#basicAck} */
+  basicAck(params: MethodParams[Cmd.BasicAck]): Promise<void> {
+    return this._lazy().then(ch => ch.basicAck(params))
+  }
+
+  /** {@inheritDoc Channel#basicReject} */
+  basicReject(params: MethodParams[Cmd.BasicReject]): Promise<void> {
+    return this._lazy().then(ch => ch.basicReject(params))
+  }
+
+  /** {@inheritDoc Channel#basicNack} */
+  basicNack(params: MethodParams[Cmd.BasicNack]): Promise<void> {
+    return this._lazy().then(ch => ch.basicNack(params))
+  }
+
   /** {@inheritDoc Channel#queueDeclare} */
   queueDeclare(params: MethodParams[Cmd.QueueDeclare]): Promise<MethodParams[Cmd.QueueDeclareOK]>
   queueDeclare(queue?: string): Promise<MethodParams[Cmd.QueueDeclareOK]>
